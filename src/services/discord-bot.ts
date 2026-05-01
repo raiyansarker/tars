@@ -16,6 +16,7 @@ import { ContestDigestService, renderContestLine } from "./contest-digest"
 import { ProfileSourceError, ProfileSourceService } from "./profile-sources"
 import { StateStoreService } from "./state-store"
 import { buildTrackingAnnouncement } from "../lib/announcements"
+import { generateMotivationalQuote, generateShameExcuse } from "./no"
 import {
   formatDeliveryTime,
   isValidTimeZone,
@@ -643,6 +644,14 @@ export const DiscordBotServiceLive = Layer.scoped(
         }
       })
     }
+
+    chat.onNewMessage(/^!oops/i, async (thread, message) => {
+      try {
+        await thread.post(generateShameExcuse())
+      } catch (error) {
+        console.error("[Oops] Handler failed:", error instanceof Error ? error.message : error)
+      }
+    })
 
     const initializedChat = yield* Effect.acquireRelease(
       Effect.tryPromise({
