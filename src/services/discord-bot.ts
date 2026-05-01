@@ -15,6 +15,7 @@ import type { TrackingPlatform } from "../domain/bot-state"
 import { ContestDigestService, renderContestLine } from "./contest-digest"
 import { ProfileSourceError, ProfileSourceService } from "./profile-sources"
 import { StateStoreService } from "./state-store"
+import { buildTrackingAnnouncement } from "../lib/announcements"
 import {
   formatDeliveryTime,
   isValidTimeZone,
@@ -238,14 +239,18 @@ const isUnsupportedChannelType = (raw: DiscordInteractionRaw): boolean => {
 const registerSlashCommands = (
   httpClient: HttpClient.HttpClient,
   token: string,
-  applicationId: string
-): Effect.Effect<void, DiscordIntegrationError> =>
-  HttpClientRequest.put(
+  applicationId: string,
+  isDev = false
+): Effect.Effect<void, DiscordIntegrationError> => {
+  const commands = isDev
+    ? [...commandDefinitions, { name: "simulate", description: "[DEV] Simulate bot events in this channel." }]
+    : commandDefinitions
+  return HttpClientRequest.put(
     `https://discord.com/api/v10/applications/${applicationId}/commands`
   ).pipe(
     HttpClientRequest.setHeader("Authorization", `Bot ${token}`),
     HttpClientRequest.setHeader("Accept", "application/json"),
-    (request) => HttpClientRequest.bodyJson(request, commandDefinitions),
+    (request) => HttpClientRequest.bodyJson(request, commands),
     Effect.mapError(
       (cause) => new DiscordIntegrationError({ operation: "registerCommands", reason: "Failed to build request", cause })
     ),
@@ -258,6 +263,7 @@ const registerSlashCommands = (
         : new DiscordIntegrationError({ operation: "registerCommands", reason: "Failed to register slash commands", cause })
     )
   )
+}
 
 export const DiscordBotServiceLive = Layer.scoped(
   DiscordBotService,
@@ -601,6 +607,42 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(`## Streak\n> \`${trackedHandle.handle}\`  **${count}** improvement${count === 1 ? "" : "s"} recorded`)
     })
 
+    if (config.isDev) {
+      onCommand("/simulate", async (event, post) => {
+        const raw = asInteractionRaw(event.raw)
+        const context = getChannelContext(raw)
+        if (!context) { await post("Use this command inside a server text channel."); return }
+
+        const tz = await getChannelTimeZone(context.channelId)
+
+        // 1. Real digest
+        const digest = await Effect.runPromise(digestService.getDigest("tomorrow", tz))
+        await post(digest.message)
+
+        // 2. One real announcement per tracked handle
+        const [subscription, handles] = await Promise.all([
+          Effect.runPromise(store.getSubscriptionByChannel(context.channelId)),
+          Effect.runPromise(store.listTrackedHandlesByChannel(context.channelId))
+        ])
+        if (subscription) {
+          for (const h of handles) {
+            const fakeRating = 1200 + Math.floor(Math.random() * 1600)
+            const fakePrev = fakeRating - (25 + Math.floor(Math.random() * 75))
+            const fakeRank = h.platform === "codeforces" ? "Specialist" : "Green"
+            const fakeHandle = {
+              ...subscription,
+              trackedHandleId: h.id,
+              platform: h.platform,
+              handle: h.handle,
+              handleNormalized: h.handleNormalized,
+              handleCreatedByUserId: h.createdByUserId
+            }
+            await post(buildTrackingAnnouncement(fakeHandle, fakeRating, fakeRank, fakePrev))
+          }
+        }
+      })
+    }
+
     const initializedChat = yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: async () => { await chat.initialize(); return chat },
@@ -632,7 +674,7 @@ export const DiscordBotServiceLive = Layer.scoped(
           },
           catch: (cause) => new DiscordIntegrationError({ operation: "postChannelMessage", reason: "Failed to post a message to Discord", cause })
         }),
-      registerCommands: registerSlashCommands(httpClient, config.discordBotToken, config.discordApplicationId)
+      registerCommands: registerSlashCommands(httpClient, config.discordBotToken, config.discordApplicationId, config.isDev)
     }
   })
 )
