@@ -54,6 +54,10 @@ export interface StateStoreService {
     deliveryHour: number,
     deliveryMinute: number
   ) => Effect.Effect<ChannelSubscription | null, StateStoreError>
+  readonly updateSubscriptionMentionRole: (
+    channelId: string,
+    mentionRoleId: string | null
+  ) => Effect.Effect<ChannelSubscription | null, StateStoreError>
   readonly listEnabledSubscriptions: Effect.Effect<
     ReadonlyArray<ChannelSubscription>,
     StateStoreError
@@ -259,6 +263,7 @@ const mapSubscriptionRecord = (
     deliveryMinute,
     enabled: record.enabled === "true",
     createdByUserId,
+    mentionRoleId: toNullable(record.mentionRoleId),
     createdAt,
     updatedAt
   }
@@ -372,6 +377,7 @@ export const StateStoreServiceLive = Layer.scoped(
             deliveryMinute: String(input.deliveryMinute),
             enabled: "true",
             createdByUserId: existing?.createdByUserId ?? input.createdByUserId,
+            mentionRoleId: existing?.mentionRoleId ?? "",
             createdAt,
             updatedAt
           })
@@ -418,6 +424,16 @@ export const StateStoreServiceLive = Layer.scoped(
           await client.hset(subscriptionKey(channelId), {
             deliveryHour: String(deliveryHour),
             deliveryMinute: String(deliveryMinute),
+            updatedAt: new Date().toISOString()
+          })
+          return readSubscription(channelId)
+        }),
+      updateSubscriptionMentionRole: (channelId, mentionRoleId) =>
+        wrapRedisPromise("updateSubscriptionMentionRole", async () => {
+          const current = await readSubscription(channelId)
+          if (!current) return null
+          await client.hset(subscriptionKey(channelId), {
+            mentionRoleId: mentionRoleId ?? "",
             updatedAt: new Date().toISOString()
           })
           return readSubscription(channelId)

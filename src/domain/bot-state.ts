@@ -11,6 +11,7 @@ export interface ChannelSubscription {
   readonly deliveryMinute: number
   readonly enabled: boolean
   readonly createdByUserId: string
+  readonly mentionRoleId: string | null
   readonly createdAt: Date
   readonly updatedAt: Date
 }
