@@ -53,13 +53,14 @@ const buildTrackingAnnouncement = (
   nextRank: string | null,
   previousRating?: number | null
 ): string => {
-  const platform = trackedHandle.platform === "codeforces" ? "Codeforces" : "AtCoder"
+  const platform = trackedHandle.platform === "codeforces" ? "codeforces" : "atcoder"
   const profileUrl = trackedHandle.platform === "codeforces"
     ? `https://codeforces.com/profile/${encodeURIComponent(trackedHandle.handle)}`
     : `https://atcoder.jp/users/${encodeURIComponent(trackedHandle.handle)}`
   const delta = previousRating != null ? `  *(+${nextRating - previousRating})*` : ""
   const rank = nextRank ? `  ${nextRank}` : ""
   return [
+    `<@${trackedHandle.handleCreatedByUserId}>`,
     `## ${platform} — Rating Improved`,
     `> **[${trackedHandle.handle}](${profileUrl})**  \`${nextRating}\`${delta}${rank}`
   ].join("\n")

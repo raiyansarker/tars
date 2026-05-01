@@ -32,6 +32,7 @@ export interface SchedulerTrackedHandle extends ChannelSubscription {
   readonly platform: TrackingPlatform
   readonly handle: string
   readonly handleNormalized: string
+  readonly handleCreatedByUserId: string
 }
 
 export interface RatingSnapshot {

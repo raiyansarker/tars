@@ -558,7 +558,8 @@ export const StateStoreServiceLive = Layer.scoped(
                 trackedHandleId: tracked.id,
                 platform: tracked.platform,
                 handle: tracked.handle,
-                handleNormalized: tracked.handleNormalized
+                handleNormalized: tracked.handleNormalized,
+                handleCreatedByUserId: tracked.createdByUserId
               } satisfies SchedulerTrackedHandle
             })
           )
