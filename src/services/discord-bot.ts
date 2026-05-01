@@ -310,9 +310,10 @@ export const DiscordBotServiceLive = Layer.scoped(
       return sections.join("\n\n")
     }
 
+    const discordAdapter = createDiscordAdapter()
     const chat = new Chat({
       userName: config.botUserName,
-      adapters: { discord: createDiscordAdapter() },
+      adapters: { discord: discordAdapter },
       state: createRedisState({ url: config.redisUrl, keyPrefix: "tars-chat" })
     })
 
@@ -699,7 +700,10 @@ export const DiscordBotServiceLive = Layer.scoped(
               ).catch(reject)
             }),
             catch: (cause) => new DiscordIntegrationError({ operation: "startGateway", reason: "Gateway session failed", cause })
-          }).pipe(Effect.catchAll((e) => Effect.logError(`[Gateway] Session error: ${e.reason}`)))
+          }).pipe(Effect.catchAll((e) => {
+            const cause = e.cause instanceof Error ? e.cause.message : String(e.cause)
+            return Effect.logError(`[Gateway] Session error: ${e.reason} — ${cause}`)
+          }))
           yield* Effect.logInfo("[Gateway] Session ended, reconnecting in 5s")
           yield* Effect.sleep(5000)
         }
