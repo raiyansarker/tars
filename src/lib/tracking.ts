@@ -2,6 +2,9 @@ import type { RatingSnapshot, TrackedProfile } from "../domain/bot-state"
 
 export const normalizeHandle = (handle: string): string => handle.trim().toLowerCase()
 
+/** Escape markdown special chars in user-provided strings (handles, titles). */
+export const escMd = (text: string): string => text.replace(/[_*~`|]/g, "\\$&")
+
 export const isProfileUnchanged = (
   previous: RatingSnapshot | null,
   profile: TrackedProfile
