@@ -75,23 +75,23 @@ export interface StateStoreService {
     channelSubscriptionId: string,
     targetDateKey: string
   ) => Effect.Effect<void, StateStoreError>
-  readonly listTrackedHandlesByChannel: (
-    channelId: string
+  readonly listTrackedHandlesByGuild: (
+    guildId: string
   ) => Effect.Effect<ReadonlyArray<TrackedHandle>, StateStoreError>
   readonly addTrackedHandle: (
-    channelId: string,
+    guildId: string,
     platform: TrackingPlatform,
     handle: string,
     handleNormalized: string,
     createdByUserId: string
-  ) => Effect.Effect<TrackedHandle | null, StateStoreError>
+  ) => Effect.Effect<TrackedHandle, StateStoreError>
   readonly removeTrackedHandle: (
-    channelId: string,
+    guildId: string,
     platform: TrackingPlatform,
     handleNormalized: string
   ) => Effect.Effect<boolean, StateStoreError>
-  readonly getTrackedHandleByChannel: (
-    channelId: string,
+  readonly getTrackedHandleByGuild: (
+    guildId: string,
     platform: TrackingPlatform,
     handleNormalized: string
   ) => Effect.Effect<TrackedHandle | null, StateStoreError>
@@ -120,12 +120,12 @@ export interface StateStoreService {
     ratingSnapshotId: string
   ) => Effect.Effect<void, StateStoreError>
   readonly countImprovementSnapshots: (
-    channelId: string,
+    guildId: string,
     platform: TrackingPlatform,
     handleNormalized: string
   ) => Effect.Effect<number, StateStoreError>
   readonly getLeaderboard: (
-    channelId: string
+    guildId: string
   ) => Effect.Effect<
     ReadonlyArray<{
       readonly handle: string
@@ -165,13 +165,13 @@ const deliveryKey = (channelId: string, targetDateKey: string): string =>
   `${prefix}:delivery:${channelId}:${targetDateKey}`
 
 const trackedHandleIdFor = (
-  channelId: string,
+  guildId: string,
   platform: TrackingPlatform,
   handleNormalized: string
-): string => `${channelId}:${platform}:${handleNormalized}`
+): string => `${guildId}:${platform}:${handleNormalized}`
 
-const trackedSetKey = (channelId: string): string =>
-  `${prefix}:tracked:channel:${channelId}`
+const trackedSetKey = (guildId: string): string =>
+  `${prefix}:tracked:guild:${guildId}`
 
 const trackedMetaKey = (trackedHandleId: string): string =>
   `${prefix}:tracked:meta:${trackedHandleId}`
@@ -273,7 +273,7 @@ const mapTrackedHandleRecord = (
   trackedHandleId: string,
   record: Record<string, string>
 ): TrackedHandle | null => {
-  const channelId = toRequiredString(record, "channelId")
+  const guildId = toRequiredString(record, "guildId")
   const platform = toRequiredString(record, "platform")
   const handle = toRequiredString(record, "handle")
   const handleNormalized = toRequiredString(record, "handleNormalized")
@@ -282,7 +282,7 @@ const mapTrackedHandleRecord = (
   const updatedAt = toRequiredDate(record, "updatedAt")
 
   if (
-    channelId === null ||
+    guildId === null ||
     platform === null ||
     !isTrackingPlatform(platform) ||
     handle === null ||
@@ -296,7 +296,7 @@ const mapTrackedHandleRecord = (
 
   return {
     id: trackedHandleId,
-    channelSubscriptionId: channelId,
+    guildId,
     platform,
     handle,
     handleNormalized,
@@ -358,6 +358,14 @@ export const StateStoreServiceLive = Layer.scoped(
         trackedHandleId,
         await client.hgetall(trackedMetaKey(trackedHandleId))
       )
+
+    const readSubscriptionByGuild = async (
+      guildId: string
+    ): Promise<ChannelSubscription | null> => {
+      const channelIds = await client.smembers(subscriptionIndexKey)
+      const subscriptions = await Promise.all(channelIds.map((id) => readSubscription(id)))
+      return subscriptions.find((s) => s?.guildId === guildId && s.enabled) ?? null
+    }
 
     return {
       upsertSubscription: (input) =>
@@ -481,40 +489,28 @@ export const StateStoreServiceLive = Layer.scoped(
         wrapRedisPromise("releaseDigestDeliveryClaim", async () => {
           await client.del(deliveryKey(channelSubscriptionId, targetDateKey))
         }),
-      listTrackedHandlesByChannel: (channelId) =>
-        wrapRedisPromise("listTrackedHandlesByChannel", async () => {
-          const trackedIds = await client.smembers(trackedSetKey(channelId))
+      listTrackedHandlesByGuild: (guildId) =>
+        wrapRedisPromise("listTrackedHandlesByGuild", async () => {
+          const trackedIds = await client.smembers(trackedSetKey(guildId))
           const trackedHandles = await Promise.all(
             trackedIds.map((trackedHandleId) => readTrackedHandle(trackedHandleId))
           )
-
           return trackedHandles.filter(
             (trackedHandle): trackedHandle is TrackedHandle =>
               trackedHandle !== null && trackedHandle.enabled
           )
         }),
-      addTrackedHandle: (
-        channelId,
-        platform,
-        handle,
-        handleNormalized,
-        createdByUserId
-      ) =>
+      addTrackedHandle: (guildId, platform, handle, handleNormalized, createdByUserId) =>
         wrapRedisPromise("addTrackedHandle", async () => {
-          const subscription = await readSubscription(channelId)
-          if (!subscription || !subscription.enabled) {
-            return null
-          }
-
-          const trackedHandleId = trackedHandleIdFor(channelId, platform, handleNormalized)
+          const trackedHandleId = trackedHandleIdFor(guildId, platform, handleNormalized)
           const existing = await readTrackedHandle(trackedHandleId)
           const createdAt = existing?.createdAt.toISOString() ?? new Date().toISOString()
           const updatedAt = new Date().toISOString()
 
-          await client.sadd(trackedSetKey(channelId), trackedHandleId)
+          await client.sadd(trackedSetKey(guildId), trackedHandleId)
           await client.sadd(trackedIndexKey, trackedHandleId)
           await client.hset(trackedMetaKey(trackedHandleId), {
-            channelId,
+            guildId,
             platform,
             handle,
             handleNormalized,
@@ -524,28 +520,23 @@ export const StateStoreServiceLive = Layer.scoped(
             updatedAt
           })
 
-          return readTrackedHandle(trackedHandleId)
+          return (await readTrackedHandle(trackedHandleId))!
         }),
-      removeTrackedHandle: (channelId, platform, handleNormalized) =>
+      removeTrackedHandle: (guildId, platform, handleNormalized) =>
         wrapRedisPromise("removeTrackedHandle", async () => {
-          const trackedHandleId = trackedHandleIdFor(channelId, platform, handleNormalized)
+          const trackedHandleId = trackedHandleIdFor(guildId, platform, handleNormalized)
           const trackedHandle = await readTrackedHandle(trackedHandleId)
-
-          if (!trackedHandle) {
-            return false
-          }
-
+          if (!trackedHandle) return false
           await client.hset(trackedMetaKey(trackedHandleId), {
             enabled: "false",
             updatedAt: new Date().toISOString()
           })
           return true
         }),
-      getTrackedHandleByChannel: (channelId, platform, handleNormalized) =>
-        wrapRedisPromise("getTrackedHandleByChannel", async () => {
-          const trackedHandleId = trackedHandleIdFor(channelId, platform, handleNormalized)
+      getTrackedHandleByGuild: (guildId, platform, handleNormalized) =>
+        wrapRedisPromise("getTrackedHandleByGuild", async () => {
+          const trackedHandleId = trackedHandleIdFor(guildId, platform, handleNormalized)
           const trackedHandle = await readTrackedHandle(trackedHandleId)
-
           return trackedHandle && trackedHandle.enabled ? trackedHandle : null
         }),
       listSchedulerTrackedHandles: wrapRedisPromise(
@@ -560,7 +551,7 @@ export const StateStoreServiceLive = Layer.scoped(
                 return null
               }
 
-              const subscription = await readSubscription(tracked.channelSubscriptionId)
+              const subscription = await readSubscriptionByGuild(tracked.guildId)
               if (!subscription || !subscription.enabled) {
                 return null
               }
@@ -644,15 +635,15 @@ export const StateStoreServiceLive = Layer.scoped(
         wrapRedisPromise("releaseTrackingAnnouncementClaim", async () => {
           await client.del(announcementKey(trackedHandleId, ratingSnapshotId))
         }),
-      countImprovementSnapshots: (channelId, platform, handleNormalized) =>
+      countImprovementSnapshots: (guildId, platform, handleNormalized) =>
         wrapRedisPromise("countImprovementSnapshots", async () => {
-          const trackedHandleId = trackedHandleIdFor(channelId, platform, handleNormalized)
+          const trackedHandleId = trackedHandleIdFor(guildId, platform, handleNormalized)
           const count = await client.get(improvementCountKey(trackedHandleId))
           return Number(count ?? 0)
         }),
-      getLeaderboard: (channelId) =>
+      getLeaderboard: (guildId) =>
         wrapRedisPromise("getLeaderboard", async () => {
-          const trackedIds = await client.smembers(trackedSetKey(channelId))
+          const trackedIds = await client.smembers(trackedSetKey(guildId))
           const results = await Promise.all(
             trackedIds.map(async (id) => {
               const [meta, snapshotRaw] = await Promise.all([

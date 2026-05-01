@@ -847,7 +847,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       }
 
       const handles = await Effect.runPromise(
-        store.listTrackedHandlesByChannel(context.channelId),
+        store.listTrackedHandlesByGuild(context.guildId),
       );
       const cfHandle = handles.find(
         (h) =>
@@ -856,7 +856,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       );
       if (!cfHandle) {
         await post(
-          "⚠️ You don't have a Codeforces handle tracked in this channel. Use `/track-add` first.",
+          "You don't have a Codeforces handle tracked in this server. Use `/track-add` first.",
         );
         return;
       }
@@ -930,19 +930,15 @@ export const DiscordBotServiceLive = Layer.scoped(
       const profile = profileResult.right;
       const trackedHandle = await Effect.runPromise(
         store.addTrackedHandle(
-          context.channelId,
+          context.guildId,
           platform,
           profile.handle,
           normalizeHandle(profile.handle),
           event.user.userId,
         ),
       );
-      if (!trackedHandle) {
-        await post("Run `/setup` first before adding tracked handles.");
-        return;
-      }
       await post(
-        `**Tracking Started:** Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this channel.`,
+        `**Tracking Started:** Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this server.`,
       );
     });
 
@@ -962,7 +958,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       }
       const removed = await Effect.runPromise(
         store.removeTrackedHandle(
-          context.channelId,
+          context.guildId,
           platform,
           normalizeHandle(handle),
         ),
@@ -970,7 +966,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(
         removed
           ? `**Removed:** Stopped tracking ${platformLabel(platform)} handle \`${handle}\`.`
-          : "That handle is not currently tracked in this channel.",
+          : "That handle is not currently tracked in this server.",
       );
     });
 
@@ -982,7 +978,7 @@ export const DiscordBotServiceLive = Layer.scoped(
         return;
       }
       const trackedHandles = await Effect.runPromise(
-        store.listTrackedHandlesByChannel(context.channelId),
+        store.listTrackedHandlesByGuild(context.guildId),
       );
       await post(
         [
@@ -1003,7 +999,7 @@ export const DiscordBotServiceLive = Layer.scoped(
         return;
       }
       const leaderboard = await Effect.runPromise(
-        store.getLeaderboard(context.channelId),
+        store.getLeaderboard(context.guildId),
       );
       if (leaderboard.length === 0) {
         await post("No rated users tracked in this channel yet.");
@@ -1109,19 +1105,19 @@ export const DiscordBotServiceLive = Layer.scoped(
         return;
       }
       const trackedHandle = await Effect.runPromise(
-        store.getTrackedHandleByChannel(
-          context.channelId,
+        store.getTrackedHandleByGuild(
+          context.guildId,
           platform,
           normalizeHandle(handle),
         ),
       );
       if (!trackedHandle) {
-        await post("That handle is not tracked in this channel yet.");
+        await post("That handle is not tracked in this server yet.");
         return;
       }
       const count = await Effect.runPromise(
         store.countImprovementSnapshots(
-          context.channelId,
+          context.guildId,
           platform,
           trackedHandle.handleNormalized,
         ),
@@ -1151,9 +1147,7 @@ export const DiscordBotServiceLive = Layer.scoped(
         // 2. One real announcement per tracked handle
         const [subscription, handles] = await Promise.all([
           Effect.runPromise(store.getSubscriptionByChannel(context.channelId)),
-          Effect.runPromise(
-            store.listTrackedHandlesByChannel(context.channelId),
-          ),
+          Effect.runPromise(store.listTrackedHandlesByGuild(context.guildId)),
         ]);
         if (subscription) {
           for (const h of handles) {

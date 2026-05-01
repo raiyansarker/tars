@@ -18,7 +18,7 @@ export interface ChannelSubscription {
 
 export interface TrackedHandle {
   readonly id: string
-  readonly channelSubscriptionId: string
+  readonly guildId: string
   readonly platform: TrackingPlatform
   readonly handle: string
   readonly handleNormalized: string
