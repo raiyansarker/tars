@@ -639,7 +639,9 @@ export const DiscordBotServiceLive = Layer.scoped(
               handleNormalized: h.handleNormalized,
               handleCreatedByUserId: h.createdByUserId
             }
-            await post(buildTrackingAnnouncement(fakeHandle, fakeRating, fakeRank, fakePrev))
+            const delta = fakeRating - fakePrev
+            const quote = await generateMotivationalQuote(config.groqApiKey, h.handle, h.platform, delta, fakeRating, fakeRank).catch(() => "")
+            await post(buildTrackingAnnouncement(fakeHandle, fakeRating, fakeRank, fakePrev) + (quote ? `\n\n*${quote}*` : ""))
           }
         }
       })
