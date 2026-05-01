@@ -14,6 +14,7 @@ export interface AppConfig {
   readonly contestCacheTtlSeconds: number
   readonly logLevel: LogLevel.LogLevel
   readonly selfUsageUrl: Option.Option<string>
+  readonly groqApiKey: string
   readonly isDev: boolean
 }
 
@@ -42,6 +43,7 @@ const AppConfigSource = Config.all({
     Config.withDefault(300)
   ),
   selfUsageUrl: Config.string("SELF_USAGE_URL").pipe(Config.option),
+  groqApiKey: Config.string("GROQ_API_KEY"),
   isDev: Config.string("NODE_ENV").pipe(
     Config.withDefault("production"),
     Config.map((v) => v === "development")
