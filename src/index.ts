@@ -39,7 +39,7 @@ const startHttpServer = Effect.gen(function* () {
   const app = new Elysia()
     .get("/health", () => ({
       ok: true,
-      service: "contest-digest-bot",
+      service: "tars",
       schedulerPollMinutes: config.schedulerPollMinutes,
       defaultTimeZone: config.defaultTimeZone
     }))
