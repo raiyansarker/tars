@@ -11,6 +11,7 @@ import {
   isProfileImproved,
   isProfileUnchanged
 } from "../lib/tracking"
+import { buildTrackingAnnouncement } from "../lib/announcements"
 
 export interface SchedulerService {
   readonly run: Effect.Effect<never, never>
@@ -45,25 +46,6 @@ const describeError = (error: unknown): string => {
   }
 
   return String(error)
-}
-
-const buildTrackingAnnouncement = (
-  trackedHandle: SchedulerTrackedHandle,
-  nextRating: number,
-  nextRank: string | null,
-  previousRating?: number | null
-): string => {
-  const platform = trackedHandle.platform === "codeforces" ? "codeforces" : "atcoder"
-  const profileUrl = trackedHandle.platform === "codeforces"
-    ? `https://codeforces.com/profile/${encodeURIComponent(trackedHandle.handle)}`
-    : `https://atcoder.jp/users/${encodeURIComponent(trackedHandle.handle)}`
-  const delta = previousRating != null ? `  *(+${nextRating - previousRating})*` : ""
-  const rank = nextRank ? `  ${nextRank}` : ""
-  return [
-    `<@${trackedHandle.handleCreatedByUserId}>`,
-    `## ${platform} — Rating Improved`,
-    `> **[${trackedHandle.handle}](${profileUrl})**  \`${nextRating}\`${delta}${rank}`
-  ].join("\n")
 }
 
 export const SchedulerServiceLive = Layer.effect(
