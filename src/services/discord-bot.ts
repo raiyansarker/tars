@@ -99,25 +99,30 @@ const buildHelpMessage = (defaultTimeZone: string, defaultTime: string): string 
   ].join("\n")
 
 
+const ADMIN_PERMISSION = "16" // MANAGE_CHANNELS
+
 const commandDefinitions = [
   {
     name: "setup",
     description: "Enable or update scheduled contest digests for this channel.",
+    default_member_permissions: ADMIN_PERMISSION,
     options: [
       { type: 3, name: "time", description: "24-hour time like 21:00", required: true },
       { type: 3, name: "timezone", description: "IANA timezone like Asia/Dhaka", required: true }
     ]
   },
   { name: "status", description: "Show the current channel status and digest schedule." },
-  { name: "disable", description: "Disable scheduled updates in this channel." },
+  { name: "disable", description: "Disable scheduled updates in this channel.", default_member_permissions: ADMIN_PERMISSION },
   {
     name: "timezone",
     description: "Update the channel timezone.",
+    default_member_permissions: ADMIN_PERMISSION,
     options: [{ type: 3, name: "value", description: "IANA timezone like Asia/Dhaka", required: true }]
   },
   {
     name: "time",
     description: "Update the channel delivery time.",
+    default_member_permissions: ADMIN_PERMISSION,
     options: [{ type: 3, name: "value", description: "24-hour time like 21:00", required: true }]
   },
   { name: "today", description: "Show contests happening today." },
@@ -127,7 +132,7 @@ const commandDefinitions = [
     description: "Show upcoming contests for a range of days.",
     options: [{ type: 4, name: "days", description: "Number of days to look ahead (default 7, max 30)", required: false }]
   },
-  { name: "test-digest", description: "Preview the scheduled digest for this channel." },
+  { name: "test-digest", description: "Preview the scheduled digest for this channel.", default_member_permissions: ADMIN_PERMISSION },
   { name: "next", description: "Show the next upcoming contest." },
   {
     name: "track-add",
