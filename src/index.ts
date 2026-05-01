@@ -95,10 +95,16 @@ const program = Effect.scoped(
     const scheduler = yield* SchedulerService
 
     yield* startHttpServer
-    yield* bot.registerCommands
-    yield* Effect.logInfo("Discord slash commands registered")
+    const config = yield* AppConfig
+    if (!config.isDev) {
+      yield* bot.registerCommands
+      yield* Effect.logInfo("Discord slash commands registered")
+    } else {
+      yield* Effect.logInfo("Dev mode: skipping command registration")
+    }
     yield* Effect.forkScoped(scheduler.run)
     yield* Effect.forkScoped(startKeepAlive)
+    yield* Effect.forkScoped(bot.startGateway)
     yield* Effect.logInfo("Contest digest bot started")
     yield* Effect.never
   })
