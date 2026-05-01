@@ -306,7 +306,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       const sections = await Promise.all(
         [...grouped.entries()].map(async ([userId, hs]) => {
           const name = await fetchUsername(userId)
-          return `**${name}**\n` + hs.map(h => `  [${h.handle}](${profileUrl(h.platform, h.handle)})  ${platformLabel(h.platform)}`).join("\n")
+          return `**${name}**\n` + hs.map(h => `  [${h.handle}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}`).join("\n")
         })
       )
       return sections.join("\n\n")
@@ -522,7 +522,7 @@ export const DiscordBotServiceLive = Layer.scoped(
 
       const tags = problem.tags.length > 0 ? `\n> -# tags: ${problem.tags.join(", ")}` : ""
       await post([
-        `## [${problem.name}](${problem.url})`,
+        `## [${problem.name}](<${problem.url}>)`,
         `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\``,
         tags
       ].filter(Boolean).join("\n"))
@@ -590,7 +590,7 @@ export const DiscordBotServiceLive = Layer.scoped(
             ? `https://codeforces.com/profile/${encodeURIComponent(entry.handle)}`
             : `https://atcoder.jp/users/${encodeURIComponent(entry.handle)}`
           const rank = entry.rankLabel ? `  ${entry.rankLabel}` : ""
-          return `**${i + 1}.** [${entry.handle}](${url})  ${platformLabel(entry.platform)}  ${entry.rating ?? "unrated"}${rank}`
+          return `**${i + 1}.** [${entry.handle}](<${url}>)  ${platformLabel(entry.platform)}  ${entry.rating ?? "unrated"}${rank}`
         })
       ].join("\n"))
     })
@@ -608,7 +608,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       const profile = profileResult.right
       await post([
         `## ${platformLabel(platform)} Rating`,
-        `> **[${profile.handle}](${profile.profileUrl})**  \`${profile.rating ?? "Unrated"}\`${profile.rankLabel ? `  *${profile.rankLabel}*` : ""}${profile.maxRating ? `  ·  max \`${profile.maxRating}\`` : ""}`
+        `> **[${profile.handle}](<${profile.profileUrl}>)**  \`${profile.rating ?? "Unrated"}\`${profile.rankLabel ? `  *${profile.rankLabel}*` : ""}${profile.maxRating ? `  ·  max \`${profile.maxRating}\`` : ""}`
       ].join("\n"))
     })
 
@@ -632,7 +632,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       }
       const left = leftResult.right
       const right = rightResult.right
-      const fmt = (p: typeof left) => `> **[${p.handle}](${p.profileUrl})**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`
+      const fmt = (p: typeof left) => `> **[${p.handle}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`
       await post([`## ${platformLabel(platform)} Comparison`, "", fmt(left), fmt(right)].join("\n"))
     })
 

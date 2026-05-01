@@ -52,7 +52,7 @@ export const renderContestLine = (contest: Contest, timeZone: string): string =>
   const durationStr = formatDuration(contest.durationMinutes)
   const rated = contest.ratedRange ? `  ·  Rated \`${contest.ratedRange}\`` : ""
   return [
-    `**[${contest.title}](${contest.url})**`,
+    `**[${contest.title}](<${contest.url}>)**`,
     `> \`${timeStr}\`  ·  \`${durationStr}\`${rated}`,
     ""
   ].join("\n")

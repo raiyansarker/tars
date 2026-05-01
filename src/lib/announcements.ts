@@ -17,7 +17,7 @@ export const buildTrackingAnnouncement = (
     : `> now at **${nextRating}**${rank}`
   return [
     `<@${trackedHandle.handleCreatedByUserId}>`,
-    `## [${trackedHandle.handle}](${profileUrl}) just improved on ${platform}`,
+    `## [${trackedHandle.handle}](<${profileUrl}>) just improved on ${platform}`,
     deltaLine
   ].join("\n")
 }
