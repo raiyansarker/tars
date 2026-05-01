@@ -684,7 +684,24 @@ export const DiscordBotServiceLive = Layer.scoped(
           },
           catch: (cause) => new DiscordIntegrationError({ operation: "postChannelMessage", reason: "Failed to post a message to Discord", cause })
         }),
-      registerCommands: registerSlashCommands(httpClient, config.discordBotToken, config.discordApplicationId, config.isDev)
+      registerCommands: registerSlashCommands(httpClient, config.discordBotToken, config.discordApplicationId, config.isDev),
+      startGateway: Effect.gen(function* () {
+        const sessionMs = 23 * 60 * 60 * 1000
+        while (true) {
+          yield* Effect.logInfo("[Gateway] Starting Discord Gateway session")
+          yield* Effect.tryPromise({
+            try: () => new Promise<void>((resolve, reject) => {
+              discordAdapter.startGatewayListener(
+                { waitUntil: (p) => (p as Promise<void>).then(resolve, reject) },
+                sessionMs
+              ).catch(reject)
+            }),
+            catch: (cause) => new DiscordIntegrationError({ operation: "startGateway", reason: "Gateway session failed", cause })
+          }).pipe(Effect.catchAll((e) => Effect.logError(`[Gateway] Session error: ${e.reason}`)))
+          yield* Effect.logInfo("[Gateway] Session ended, reconnecting in 5s")
+          yield* Effect.sleep(5000)
+        }
+      }) as Effect.Effect<never, DiscordIntegrationError>
     }
   })
 )
