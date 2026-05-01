@@ -6,6 +6,7 @@
       "dependencies": {
         "@ai-sdk/groq": "^1.2.9",
         "@chat-adapter/discord": "^4.26.0",
+        "@chat-adapter/state-ioredis": "^4.27.0",
         "@chat-adapter/state-redis": "^4.26.0",
         "@effect/platform": "^0.96.1",
         "@effect/platform-bun": "^0.89.0",
@@ -37,6 +38,8 @@
     "@chat-adapter/discord": ["@chat-adapter/discord@4.26.0", "", { "dependencies": { "@chat-adapter/shared": "4.26.0", "chat": "4.26.0", "discord-api-types": "^0.37.119", "discord-interactions": "^4.4.0", "discord.js": "^14.25.1" } }, "sha512-p0Xm/aPjHP9z87/tXtHz0KFmbUcu7SGPQAAlT8mrKRX49jO77Tognj/5poSmV1XQ1C4BLfxpPvTQlLNK/5omkw=="],
 
     "@chat-adapter/shared": ["@chat-adapter/shared@4.26.0", "", { "dependencies": { "chat": "4.26.0" } }, "sha512-YD0MGktFXrArUqTBsyPfL5vkdD1WBS58PAWO0oVrMQAMmPxpAXfWGjBtZCkf3y8R8Svb0uVuVXiMZSForaEnMQ=="],
+
+    "@chat-adapter/state-ioredis": ["@chat-adapter/state-ioredis@4.27.0", "", { "dependencies": { "chat": "4.27.0", "ioredis": "^5.4.1" } }, "sha512-4bMG1Rtjf1qsnesHZ6EwRagod/kGIgCW3dAc0qrbraFZIRAZS3zJvHix5QgoRsgpqBhfXKbCRr0pcpUzY3Vq+g=="],
 
     "@chat-adapter/state-redis": ["@chat-adapter/state-redis@4.26.0", "", { "dependencies": { "chat": "4.26.0", "redis": "^5.11.0" } }, "sha512-NSX2E6wkDlg0AMfKFx4LPoV6cBHolL08Ht3cT+S01jss24t9GzlDw/BUsrWOeoTElwEhxZcQw5bUkStUAA7JMg=="],
 
@@ -411,6 +414,8 @@
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
 
     "zwitch": ["zwitch@2.0.4", "", {}, "sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A=="],
+
+    "@chat-adapter/state-ioredis/chat": ["chat@4.27.0", "", { "dependencies": { "@workflow/serde": "4.1.0-beta.2", "mdast-util-to-string": "^4.0.0", "remark-gfm": "^4.0.0", "remark-parse": "^11.0.0", "remark-stringify": "^11.0.0", "remend": "^1.2.1", "unified": "^11.0.5" } }, "sha512-PrL4k263DSIlckhX8eHLT84RdTSznOBxCCfaDc5JVJtWaS0lJkCNctm/g3gIrI41AcDHcpc/3WDoUHVrbh0W4w=="],
 
     "@discordjs/builders/discord-api-types": ["discord-api-types@0.38.47", "", {}, "sha512-XgXQodHQBAE6kfD7kMvVo30863iHX1LHSqNq6MGUTDwIFCCvHva13+rwxyxVXDqudyApMNAd32PGjgVETi5rjA=="],
 

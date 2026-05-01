@@ -1,6 +1,6 @@
 import { AsyncResource } from "node:async_hooks"
 import { createDiscordAdapter } from "@chat-adapter/discord"
-import { createRedisState } from "@chat-adapter/state-redis"
+import { createIoRedisState } from "@chat-adapter/state-ioredis"
 import {
   HttpClient,
   HttpClientRequest,
@@ -314,7 +314,11 @@ export const DiscordBotServiceLive = Layer.scoped(
     const chat = new Chat({
       userName: config.botUserName,
       adapters: { discord: discordAdapter },
-      state: createRedisState({ url: config.redisUrl, keyPrefix: "tars-chat" })
+      state: createIoRedisState({
+        url: config.redisUrl,
+        keyPrefix: "tars-chat",
+        logger: { ...console, child: () => ({ ...console, child: () => console as any }) } as any
+      })
     })
 
     // Patch: bind ALS context before async hop.

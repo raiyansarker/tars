@@ -1,5 +1,5 @@
 import { Context, Data, Effect, Layer } from "effect"
-import { createClient } from "redis"
+import Redis from "ioredis"
 
 import { AppConfig } from "../config"
 import type {
@@ -330,28 +330,28 @@ export const StateStoreServiceLive = Layer.scoped(
     const config = yield* AppConfig
 
     const client = yield* Effect.acquireRelease(
-      wrapRedisPromise("connectRedis", async () => {
-        const redis = createClient({ url: config.redisUrl })
-        await redis.connect()
-        return redis
+      Effect.tryPromise({
+        try: async () => new Redis(config.redisUrl, { lazyConnect: false, maxRetriesPerRequest: null }),
+        catch: (cause) => new StateStoreError({ operation: "connectRedis", cause })
       }),
       (redis) =>
-        wrapRedisPromise("disconnectRedis", () => redis.quit()).pipe(
-          Effect.catchAll(() => Effect.void)
-        )
+        Effect.tryPromise({
+          try: () => redis.quit(),
+          catch: () => undefined
+        }).pipe(Effect.catchAll(() => Effect.void))
     )
 
     const readSubscription = async (
       channelId: string
     ): Promise<ChannelSubscription | null> =>
-      mapSubscriptionRecord(await client.hGetAll(subscriptionKey(channelId)), channelId)
+      mapSubscriptionRecord(await client.hgetall(subscriptionKey(channelId)), channelId)
 
     const readTrackedHandle = async (
       trackedHandleId: string
     ): Promise<TrackedHandle | null> =>
       mapTrackedHandleRecord(
         trackedHandleId,
-        await client.hGetAll(trackedMetaKey(trackedHandleId))
+        await client.hgetall(trackedMetaKey(trackedHandleId))
       )
 
     return {
@@ -362,8 +362,8 @@ export const StateStoreServiceLive = Layer.scoped(
           const createdAt = existing?.createdAt.toISOString() ?? new Date().toISOString()
           const updatedAt = new Date().toISOString()
 
-          await client.sAdd(subscriptionIndexKey, input.channelId)
-          await client.hSet(key, {
+          await client.sadd(subscriptionIndexKey, input.channelId)
+          await client.hset(key, {
             guildId: input.guildId,
             guildName: input.guildName ?? "",
             channelName: input.channelName ?? "",
@@ -389,7 +389,7 @@ export const StateStoreServiceLive = Layer.scoped(
             return false
           }
 
-          await client.hSet(subscriptionKey(channelId), {
+          await client.hset(subscriptionKey(channelId), {
             enabled: "false",
             updatedAt: new Date().toISOString()
           })
@@ -402,7 +402,7 @@ export const StateStoreServiceLive = Layer.scoped(
             return null
           }
 
-          await client.hSet(subscriptionKey(channelId), {
+          await client.hset(subscriptionKey(channelId), {
             timezone,
             updatedAt: new Date().toISOString()
           })
@@ -415,7 +415,7 @@ export const StateStoreServiceLive = Layer.scoped(
             return null
           }
 
-          await client.hSet(subscriptionKey(channelId), {
+          await client.hset(subscriptionKey(channelId), {
             deliveryHour: String(deliveryHour),
             deliveryMinute: String(deliveryMinute),
             updatedAt: new Date().toISOString()
@@ -425,7 +425,7 @@ export const StateStoreServiceLive = Layer.scoped(
       listEnabledSubscriptions: wrapRedisPromise(
         "listEnabledSubscriptions",
         async () => {
-          const channelIds = await client.sMembers(subscriptionIndexKey)
+          const channelIds = await client.smembers(subscriptionIndexKey)
           const subscriptions = await Promise.all(
             channelIds.map((channelId) => readSubscription(channelId))
           )
@@ -445,11 +445,7 @@ export const StateStoreServiceLive = Layer.scoped(
               status: "processing",
               claimedAt: new Date().toISOString(),
               messageId: null
-            }),
-            {
-              EX: claimTtlSeconds,
-              NX: true
-            }
+            }), 'EX', claimTtlSeconds, 'NX'
           )
 
           return claimed === "OK"
@@ -471,7 +467,7 @@ export const StateStoreServiceLive = Layer.scoped(
         }),
       listTrackedHandlesByChannel: (channelId) =>
         wrapRedisPromise("listTrackedHandlesByChannel", async () => {
-          const trackedIds = await client.sMembers(trackedSetKey(channelId))
+          const trackedIds = await client.smembers(trackedSetKey(channelId))
           const trackedHandles = await Promise.all(
             trackedIds.map((trackedHandleId) => readTrackedHandle(trackedHandleId))
           )
@@ -499,9 +495,9 @@ export const StateStoreServiceLive = Layer.scoped(
           const createdAt = existing?.createdAt.toISOString() ?? new Date().toISOString()
           const updatedAt = new Date().toISOString()
 
-          await client.sAdd(trackedSetKey(channelId), trackedHandleId)
-          await client.sAdd(trackedIndexKey, trackedHandleId)
-          await client.hSet(trackedMetaKey(trackedHandleId), {
+          await client.sadd(trackedSetKey(channelId), trackedHandleId)
+          await client.sadd(trackedIndexKey, trackedHandleId)
+          await client.hset(trackedMetaKey(trackedHandleId), {
             channelId,
             platform,
             handle,
@@ -523,7 +519,7 @@ export const StateStoreServiceLive = Layer.scoped(
             return false
           }
 
-          await client.hSet(trackedMetaKey(trackedHandleId), {
+          await client.hset(trackedMetaKey(trackedHandleId), {
             enabled: "false",
             updatedAt: new Date().toISOString()
           })
@@ -539,7 +535,7 @@ export const StateStoreServiceLive = Layer.scoped(
       listSchedulerTrackedHandles: wrapRedisPromise(
         "listSchedulerTrackedHandles",
         async () => {
-          const trackedIds = await client.sMembers(trackedIndexKey)
+          const trackedIds = await client.smembers(trackedIndexKey)
           const rows = await Promise.all(
             trackedIds.map(async (trackedHandleId) => {
               const tracked = await readTrackedHandle(trackedHandleId)
@@ -591,8 +587,8 @@ export const StateStoreServiceLive = Layer.scoped(
           })
 
           await client.set(latestSnapshotKey(input.trackedHandleId), payload)
-          await client.lPush(snapshotHistoryKey(input.trackedHandleId), payload)
-          await client.lTrim(snapshotHistoryKey(input.trackedHandleId), 0, 49)
+          await client.lpush(snapshotHistoryKey(input.trackedHandleId), payload)
+          await client.ltrim(snapshotHistoryKey(input.trackedHandleId), 0, 49)
           if (input.isImprovement) {
             await client.incr(improvementCountKey(input.trackedHandleId))
           }
@@ -606,11 +602,7 @@ export const StateStoreServiceLive = Layer.scoped(
             JSON.stringify({
               status: "processing",
               claimedAt: new Date().toISOString()
-            }),
-            {
-              EX: claimTtlSeconds,
-              NX: true
-            }
+            }), 'EX', claimTtlSeconds, 'NX'
           )
 
           return created === "OK"
@@ -644,11 +636,11 @@ export const StateStoreServiceLive = Layer.scoped(
         }),
       getLeaderboard: (channelId) =>
         wrapRedisPromise("getLeaderboard", async () => {
-          const trackedIds = await client.sMembers(trackedSetKey(channelId))
+          const trackedIds = await client.smembers(trackedSetKey(channelId))
           const results = await Promise.all(
             trackedIds.map(async (id) => {
               const [meta, snapshotRaw] = await Promise.all([
-                client.hGetAll(trackedMetaKey(id)),
+                client.hgetall(trackedMetaKey(id)),
                 client.get(latestSnapshotKey(id))
               ])
 
