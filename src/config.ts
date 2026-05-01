@@ -23,7 +23,7 @@ const AppConfigSource = Config.all({
   discordPublicKey: Config.string("DISCORD_PUBLIC_KEY"),
   discordApplicationId: Config.string("DISCORD_APPLICATION_ID"),
   redisUrl: Config.string("REDIS_URL"),
-  botUserName: Config.string("BOT_USER_NAME").pipe(Config.withDefault("contest-bot")),
+  botUserName: Config.string("BOT_USER_NAME").pipe(Config.withDefault("tars")),
   port: Config.integer("PORT").pipe(Config.withDefault(3000)),
   defaultTimeZone: Config.string("DEFAULT_TIMEZONE").pipe(
     Config.withDefault("Asia/Dhaka")
