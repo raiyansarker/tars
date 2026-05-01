@@ -9,10 +9,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/groq": "^1.2.9",
     "@chat-adapter/discord": "^4.26.0",
     "@chat-adapter/state-redis": "^4.26.0",
     "@effect/platform": "^0.96.1",
     "@effect/platform-bun": "^0.89.0",
+    "ai": "^4.3.16",
     "chat": "^4.26.0",
     "effect": "^3.21.2",
     "elysia": "^1.4.28",
