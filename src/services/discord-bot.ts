@@ -108,7 +108,7 @@ const commandDefinitions = [
       { type: 3, name: "timezone", description: "IANA timezone like Asia/Dhaka", required: true }
     ]
   },
-  { name: "settings", description: "Show the current channel settings." },
+  { name: "status", description: "Show the current channel status and digest schedule." },
   { name: "disable", description: "Disable scheduled updates in this channel." },
   {
     name: "timezone",
@@ -398,25 +398,16 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(`**Setup Complete:** Scheduled updates enabled for <#${subscription.channelId}> at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\` (${subscription.timezone}).`)
     })
 
-    onCommand("/settings", async (event, post) => {
+    onCommand("/status", async (event, post) => {
       const raw = asInteractionRaw(event.raw)
       const context = getChannelContext(raw)
       if (!context) { await post("Use this command inside a Discord server text channel."); return }
-      const [subscription, trackedHandles] = await Promise.all([
-        Effect.runPromise(store.getSubscriptionByChannel(context.channelId)),
-        Effect.runPromise(store.listTrackedHandlesByChannel(context.channelId))
-      ])
+      const subscription = await Effect.runPromise(store.getSubscriptionByChannel(context.channelId))
       if (!subscription) { await post("This channel is not configured yet. Run `/setup time:<HH:MM> timezone:<IANA zone>`."); return }
       const nextRun = computeNextDeliveryAt(new Date(), subscription.timezone, subscription.deliveryHour, subscription.deliveryMinute)
       await post([
-        `## Settings — <#${subscription.channelId}>`,
-        `> Status \`${subscription.enabled ? "active" : "disabled"}\`  ·  TZ \`${subscription.timezone}\`  ·  Time \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\`  ·  Next <t:${Math.floor(nextRun.getTime() / 1000)}:R>`,
-        "",
-        `**Tracked Handles** *(${trackedHandles.length})*`,
-        "",
-        trackedHandles.length === 0
-          ? "none"
-          : await renderTrackedByUser(trackedHandles)
+        `## Status — <#${subscription.channelId}>`,
+        `> Digest \`${subscription.enabled ? "on" : "off"}\`  ·  Timezone \`${subscription.timezone}\`  ·  Daily at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\`  ·  Next <t:${Math.floor(nextRun.getTime() / 1000)}:R>`
       ].join("\n"))
     })
 
