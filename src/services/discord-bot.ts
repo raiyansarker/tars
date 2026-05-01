@@ -212,7 +212,16 @@ const commandDefinitions = [
   },
   { name: "leaderboard", description: "Show the top 10 rated users in this channel." },
   { name: "lucky", description: "Pick a fun contest from tomorrow's pool." },
-  { name: "random", description: "Get a random Codeforces problem suited to your rating." },
+  { name: "random", description: "Get a random Codeforces problem suited to your rating.",
+    options: [{
+      type: 3, name: "difficulty", description: "Problem difficulty relative to your rating", required: false,
+      choices: [
+        { name: "Easy (±100)", value: "easy" },
+        { name: "Medium (+200–400)", value: "medium" },
+        { name: "Hard (+400–600)", value: "hard" }
+      ]
+    }]
+  },
   { name: "help", description: "Show command help and setup guidance." }
 ]
 
@@ -529,11 +538,16 @@ export const DiscordBotServiceLive = Layer.scoped(
         )
       )
       const rating = profile?.rating ?? 800
+      const difficulty = flattenOptions(raw.data?.options).get("difficulty") ?? "medium"
+      const [minRating, maxRating] =
+        difficulty === "easy"  ? [rating - 100, rating + 100] :
+        difficulty === "hard"  ? [rating + 400, rating + 600] :
+                                 [rating, rating + 200]
       const problem = await Effect.runPromise(
-        fetchRandomProblem(rating).pipe(Effect.provideService(HttpClient.HttpClient, httpClient))
+        fetchRandomProblem(minRating, maxRating).pipe(Effect.provideService(HttpClient.HttpClient, httpClient))
       )
 
-      if (!problem) { await post(`No problems found in the ${rating}–${rating + 200} range. Try again later.`); return }
+      if (!problem) { await post(`No problems found in the ${minRating}–${maxRating} rating range. Try again later.`); return }
 
       const tags = problem.tags.length > 0 ? `\n> -# tags: ${problem.tags.join(", ")}` : ""
       await post([

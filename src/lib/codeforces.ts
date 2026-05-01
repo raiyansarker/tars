@@ -14,7 +14,8 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 let problemCache: { fetchedAt: number; problems: CfProblem[] } | undefined
 
 export const fetchRandomProblem = (
-  rating: number
+  minRating: number,
+  maxRating: number
 ): Effect.Effect<CfProblem | null, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const now = Date.now()
@@ -54,7 +55,7 @@ export const fetchRandomProblem = (
     }
 
     const candidates = problemCache.problems.filter(
-      (p) => p.rating >= rating && p.rating <= rating + 200
+      (p) => p.rating >= minRating && p.rating <= maxRating
     )
     if (candidates.length === 0) return null
     return candidates[Math.floor(Math.random() * candidates.length)]!
