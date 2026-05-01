@@ -14,6 +14,7 @@ export interface AppConfig {
   readonly contestCacheTtlSeconds: number
   readonly logLevel: LogLevel.LogLevel
   readonly selfUsageUrl: Option.Option<string>
+  readonly isDev: boolean
 }
 
 export const AppConfig = Context.GenericTag<AppConfig>("AppConfig")
@@ -41,6 +42,10 @@ const AppConfigSource = Config.all({
     Config.withDefault(300)
   ),
   selfUsageUrl: Config.string("SELF_USAGE_URL").pipe(Config.option),
+  isDev: Config.string("NODE_ENV").pipe(
+    Config.withDefault("production"),
+    Config.map((v) => v === "development")
+  ),
   logLevel: Config.string("LOG_LEVEL").pipe(
     Config.withDefault("INFO"),
     Config.map((level) => {
