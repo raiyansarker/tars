@@ -17,6 +17,7 @@ import { ProfileSourceError, ProfileSourceService } from "./profile-sources"
 import { StateStoreService } from "./state-store"
 import { buildTrackingAnnouncement } from "../lib/announcements"
 import { generateMotivationalQuote, generateShameExcuse } from "./no"
+import { fetchRandomProblem } from "../lib/codeforces"
 import {
   formatDeliveryTime,
   isValidTimeZone,
@@ -187,6 +188,7 @@ const commandDefinitions = [
   },
   { name: "leaderboard", description: "Show the top 10 rated users in this channel." },
   { name: "lucky", description: "Pick a fun contest from tomorrow's pool." },
+  { name: "random", description: "Get a random Codeforces problem suited to your rating." },
   { name: "help", description: "Show command help and setup guidance." }
 ]
 
@@ -492,6 +494,40 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(["## Lucky Pick", "> -# bias: contests under 2h", "", renderContestLine(contest, timeZone)].join("\n"))
     })
 
+    onCommand("/random", async (event, post) => {
+      const raw = asInteractionRaw(event.raw)
+      const context = getChannelContext(raw)
+      if (!context) { await post("⚠️ Use this command inside a Discord server text channel."); return }
+
+      const handles = await Effect.runPromise(store.listTrackedHandlesByChannel(context.channelId))
+      const cfHandle = handles.find(
+        (h) => h.platform === "codeforces" && h.createdByUserId === event.user.userId
+      )
+      if (!cfHandle) {
+        await post("⚠️ You don't have a Codeforces handle tracked in this channel. Use `/track-add` first.")
+        return
+      }
+
+      const profile = await Effect.runPromise(
+        profileService.fetchProfile("codeforces", cfHandle.handle).pipe(
+          Effect.catchAll(() => Effect.succeed(null))
+        )
+      )
+      const rating = profile?.rating ?? 800
+      const problem = await Effect.runPromise(
+        fetchRandomProblem(rating).pipe(Effect.provideService(HttpClient.HttpClient, httpClient))
+      )
+
+      if (!problem) { await post(`No problems found in the ${rating}–${rating + 200} range. Try again later.`); return }
+
+      const tags = problem.tags.length > 0 ? `\n> -# tags: ${problem.tags.join(", ")}` : ""
+      await post([
+        `## [${problem.name}](${problem.url})`,
+        `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\``,
+        tags
+      ].filter(Boolean).join("\n"))
+    })
+
     onCommand("/track-add", async (event, post) => {
       const context = await requireAdminChannel(event, post)
       if (!context) return
@@ -653,8 +689,11 @@ export const DiscordBotServiceLive = Layer.scoped(
     }
 
     chat.onNewMessage(/^!oops/i, async (thread, message) => {
+      console.log(`[Oops] Triggered by ${message.author.userName} in thread ${message.threadId}`)
       try {
-        await thread.post(generateShameExcuse())
+        const excuse = await generateShameExcuse()
+        console.log(`[Oops] Responding: ${excuse}`)
+        await thread.post(excuse)
       } catch (error) {
         console.error("[Oops] Handler failed:", error instanceof Error ? error.message : error)
       }
