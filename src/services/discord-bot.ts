@@ -497,7 +497,7 @@ export const DiscordBotServiceLive = Layer.scoped(
     onCommand("/random", async (event, post) => {
       const raw = asInteractionRaw(event.raw)
       const context = getChannelContext(raw)
-      if (!context) { await post("⚠️ Use this command inside a Discord server text channel."); return }
+      if (!context) { await post("Use this command inside a Discord server text channel."); return }
 
       const handles = await Effect.runPromise(store.listTrackedHandlesByChannel(context.channelId))
       const cfHandle = handles.find(
@@ -529,8 +529,9 @@ export const DiscordBotServiceLive = Layer.scoped(
     })
 
     onCommand("/track-add", async (event, post) => {
-      const context = await requireAdminChannel(event, post)
-      if (!context) return
+      const raw = asInteractionRaw(event.raw)
+      const context = getChannelContext(raw)
+      if (!context) { await post("Use this command inside a Discord server text channel."); return }
       const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handle = options.get("handle")
@@ -552,8 +553,9 @@ export const DiscordBotServiceLive = Layer.scoped(
     })
 
     onCommand("/track-remove", async (event, post) => {
-      const context = await requireAdminChannel(event, post)
-      if (!context) return
+      const raw = asInteractionRaw(event.raw)
+      const context = getChannelContext(raw)
+      if (!context) { await post("Use this command inside a Discord server text channel."); return }
       const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handle = options.get("handle")
