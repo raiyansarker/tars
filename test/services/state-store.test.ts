@@ -10,69 +10,56 @@ const setStore = new Map<string, Set<string>>()
 const listStore = new Map<string, string[]>()
 
 const mockClient = {
-  connect: async () => {},
   quit: async () => {},
-  hGetAll: async (key: string) => {
+  hgetall: async (key: string) => {
     const h = hashStore.get(key)
     if (!h) return {}
     return Object.fromEntries(h)
   },
-  hSet: async (key: string, values: Record<string, string>) => {
+  hset: async (key: string, ...args: any[]) => {
     let h = hashStore.get(key)
-    if (!h) {
-      h = new Map()
-      hashStore.set(key, h)
-    }
-    for (const [k, v] of Object.entries(values)) {
-      h.set(k, v)
+    if (!h) { h = new Map(); hashStore.set(key, h) }
+    if (args.length === 1 && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+      for (const [k, v] of Object.entries(args[0])) h.set(k, String(v))
+    } else {
+      for (let i = 0; i < args.length; i += 2) h.set(String(args[i]), String(args[i + 1]))
     }
   },
-  sAdd: async (key: string, value: string) => {
+  sadd: async (key: string, value: string) => {
     let s = setStore.get(key)
-    if (!s) {
-      s = new Set()
-      setStore.set(key, s)
-    }
+    if (!s) { s = new Set(); setStore.set(key, s) }
     s.add(value)
   },
-  sMembers: async (key: string) => {
+  smembers: async (key: string) => {
     const s = setStore.get(key)
     return s ? Array.from(s) : []
   },
-  set: async (key: string, value: string, options?: any) => {
-    if (options?.NX && store.has(key)) return null
+  set: async (key: string, value: string, ...args: any[]) => {
+    const hasNX = args.includes('NX') || args.includes('nx') || args[0]?.NX
+    if (hasNX && store.has(key)) return null
     store.set(key, value)
     return "OK"
   },
-  get: async (key: string) => {
-    return store.get(key) ?? null
-  },
-  del: async (key: string) => {
-    store.delete(key)
-  },
-  lPush: async (key: string, value: string) => {
+  get: async (key: string) => store.get(key) ?? null,
+  del: async (key: string) => { store.delete(key) },
+  lpush: async (key: string, value: string) => {
     let l = listStore.get(key)
-    if (!l) {
-      l = []
-      listStore.set(key, l)
-    }
+    if (!l) { l = []; listStore.set(key, l) }
     l.unshift(value)
   },
-  lTrim: async (key: string, start: number, end: number) => {
-    let l = listStore.get(key)
-    if (l) {
-      listStore.set(key, l.slice(start, end + 1))
-    }
+  ltrim: async (key: string, start: number, end: number) => {
+    const l = listStore.get(key)
+    if (l) listStore.set(key, l.slice(start, end + 1))
   },
   incr: async (key: string) => {
-    let v = Number(store.get(key) ?? "0")
-    v++
+    const v = Number(store.get(key) ?? "0") + 1
     store.set(key, String(v))
+    return v
   }
 }
 
-mock.module("redis", () => ({
-  createClient: () => mockClient
+mock.module("ioredis", () => ({
+  default: function() { return mockClient }
 }))
 
 describe("StateStoreService", () => {
