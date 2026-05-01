@@ -40,6 +40,7 @@ export interface DiscordBotService {
     message: string
   ) => Effect.Effect<{ readonly messageId: string | null }, DiscordIntegrationError>
   readonly registerCommands: Effect.Effect<void, DiscordIntegrationError>
+  readonly startGateway: Effect.Effect<never, DiscordIntegrationError>
 }
 
 export const DiscordBotService = Context.GenericTag<DiscordBotService>("DiscordBotService")
