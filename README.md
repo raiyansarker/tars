@@ -1,4 +1,4 @@
-# Contest Digest Bot
+# TARS - Discord Contest Bot
 
 A professional, multi-tenant Discord bot built with **Bun** and **Effect-TS**. It provides daily contest digests (Codeforces & AtCoder) and real-time rating tracking for competitive programmers.
 
@@ -38,20 +38,18 @@ bun run start  # For production
 
 ---
 
-## 📦 Deployment (Render + Upstash)
+## 📦 Deployment
 
-### 1. Persistence (Upstash)
-Since Render's free plan doesn't include Redis, use [Upstash](https://upstash.com/) for a free serverless Redis instance. Copy the `REDIS_URL`.
+### 1. Persistence
+Ensure you have a reachable Redis instance and set the `REDIS_URL` in your environment variables.
 
-### 2. Web Service (Render)
-1. Create a new **Web Service** on Render.
-2. Build Command: `bun install`
-3. Start Command: `bun run start`
-4. Add all environment variables from your `.env` file.
+### 2. Web Service
+1. Build Command: `bun install`
+2. Start Command: `bun run start`
+3. Add all environment variables from your `.env` file.
 
-### 💡 Keep-Alive (Important for Render Free Plan)
-Render's free plan sleeps after 15 minutes of inactivity, which stops the scheduler.
-**Fix:** The bot has a built-in Keep-Alive service. Just set the `SELF_USAGE_URL` environment variable to your app's public URL (e.g., `https://my-bot.onrender.com`). The bot will ping itself every 10 minutes to stay awake 24/7.
+### 💡 Keep-Alive
+If your hosting provider sleeps after inactivity, you can use the built-in Keep-Alive service. Set the `SELF_USAGE_URL` environment variable to your app's public URL (e.g., `https://my-bot.example.com`). The bot will ping itself every 10 minutes to stay awake.
 
 ---
 
