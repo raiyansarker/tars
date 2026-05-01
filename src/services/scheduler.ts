@@ -89,7 +89,11 @@ export const SchedulerServiceLive = Layer.effect(
             .getDigest("tomorrow", subscription.timezone, now)
             .pipe(
               Effect.flatMap((digest) =>
-                bot.postChannelMessage(subscription.guildId, subscription.channelId, digest.message).pipe(
+                bot.postChannelMessage(subscription.guildId, subscription.channelId,
+                  subscription.mentionRoleId
+                    ? `<@&${subscription.mentionRoleId}>\n${digest.message}`
+                    : digest.message
+                ).pipe(
                   Effect.flatMap((sent) =>
                     store.completeDigestDelivery(
                       subscription.id,

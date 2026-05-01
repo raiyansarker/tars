@@ -348,18 +348,13 @@ const commandDefinitions = [
   { name: "help", description: "Show command help and setup guidance." },
   {
     name: "role",
-    description:
-      "Set or clear the role to mention when the daily digest is posted.",
+    description: "Set a role to mention when the daily digest is posted.",
     options: [
-      {
-        type: 8,
-        name: "value",
-        description: "Role to mention (omit to clear)",
-        required: false,
-      },
-    ],
+      { type: 8, name: "value", description: "Role to mention", required: true }
+    ]
   },
-];
+  { name: "role-clear", description: "Remove the role mention from the daily digest." }
+]
 
 const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
   const permissionValue = raw.member?.permissions;
@@ -745,6 +740,23 @@ export const DiscordBotServiceLive = Layer.scoped(
           : "Run `/setup` first before updating settings.",
       );
     });
+
+    onCommand("/role", async (event, post) => {
+      const context = await requireAdminChannel(event, post)
+      if (!context) return
+      const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
+      const roleId = options.get("value")
+      if (!roleId) { await post("Provide a role."); return }
+      const updated = await Effect.runPromise(store.updateSubscriptionMentionRole(context.channelId, roleId))
+      await post(updated ? `Role set. Digest will mention <@&${roleId}>.` : "Run `/setup` first.")
+    })
+
+    onCommand("/role-clear", async (event, post) => {
+      const context = await requireAdminChannel(event, post)
+      if (!context) return
+      const updated = await Effect.runPromise(store.updateSubscriptionMentionRole(context.channelId, null))
+      await post(updated ? "Role mention cleared." : "Run `/setup` first.")
+    })
 
     onCommand("/today", async (event, post) => {
       const raw = asInteractionRaw(event.raw);
