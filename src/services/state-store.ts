@@ -136,7 +136,7 @@ export interface StateStoreService {
 export const StateStoreService =
   Context.GenericTag<StateStoreService>("StateStoreService")
 
-const prefix = "contest-bot"
+const prefix = "tars"
 const subscriptionIndexKey = `${prefix}:subscriptions:index`
 const trackedIndexKey = `${prefix}:tracked:index`
 const claimTtlSeconds = 60 * 20

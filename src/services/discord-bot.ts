@@ -287,7 +287,7 @@ export const DiscordBotServiceLive = Layer.scoped(
     const chat = new Chat({
       userName: config.botUserName,
       adapters: { discord: createDiscordAdapter() },
-      state: createRedisState({ url: config.redisUrl, keyPrefix: "contest-bot-chat" })
+      state: createRedisState({ url: config.redisUrl, keyPrefix: "tars-chat" })
     })
 
     // Patch: bind ALS context before async hop.
