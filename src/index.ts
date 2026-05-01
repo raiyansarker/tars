@@ -37,6 +37,21 @@ const startHttpServer = Effect.gen(function* () {
   const bot = yield* DiscordBotService
 
   const app = new Elysia()
+    .onRequest(({ request }) => {
+      Effect.runPromise(
+        Effect.logDebug(`[http] ${request.method} ${new URL(request.url).pathname}`)
+      )
+    })
+    .onAfterResponse(({ request, set }) => {
+      const status = set.status ?? 200
+      const path = new URL(request.url).pathname
+      const level = typeof status === "number" && status >= 400 ? "warn" : "info"
+      Effect.runPromise(
+        level === "warn"
+          ? Effect.logWarning(`[http] ${request.method} ${path}  ${status}`)
+          : Effect.logInfo(`[http] ${request.method} ${path}  ${status}`)
+      )
+    })
     .get("/health", () => ({
       ok: true,
       service: "tars",
@@ -52,7 +67,7 @@ const startHttpServer = Effect.gen(function* () {
     (runningApp) => Effect.promise(() => runningApp.stop()).pipe(Effect.catchAll(() => Effect.void))
   )
 
-  yield* Effect.logInfo(`HTTP server listening on port ${config.port}`)
+  yield* Effect.logInfo(`[http] listening on port ${config.port}`)
 })
 
 const startKeepAlive = Effect.gen(function* () {
