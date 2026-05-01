@@ -12,6 +12,7 @@ import {
   isProfileUnchanged
 } from "../lib/tracking"
 import { buildTrackingAnnouncement } from "../lib/announcements"
+import { generateMotivationalQuote } from "./no"
 
 export interface SchedulerService {
   readonly run: Effect.Effect<never, never>
@@ -228,12 +229,24 @@ export const SchedulerServiceLive = Layer.effect(
             continue
           }
 
+          const delta = previousSnapshot?.rating != null ? profile.rating - previousSnapshot.rating : null
+          const quote = yield* Effect.tryPromise({
+            try: () => generateMotivationalQuote(
+              config.groqApiKey,
+              trackedHandle.handle,
+              trackedHandle.platform,
+              delta,
+              profile.rating!,
+              profile.rankLabel
+            ),
+            catch: () => null
+          }).pipe(Effect.orElseSucceed(() => ""))
           const message = buildTrackingAnnouncement(
             trackedHandle,
             profile.rating,
             profile.rankLabel,
             previousSnapshot?.rating
-          )
+          ) + (quote ? `\n\n*${quote}*` : "")
 
           yield* bot.postChannelMessage(trackedHandle.guildId, trackedHandle.channelId, message).pipe(
             Effect.flatMap((sent) =>
