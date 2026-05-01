@@ -17,3 +17,41 @@ Examples:
 "Up 60 points. Benq is not here to participate, apparently."
 "That's a Grandmaster rating now. Act like you've been there before — oh wait, you haven't. Yet."
 "The algorithm didn't stand a chance. Neither will the next one."`;
+
+export async function generateMotivationalQuote(
+  groqApiKey: string,
+  handle: string,
+  platform: string,
+  delta: number | null,
+  newRating: number,
+  newRank: string | null,
+): Promise<string> {
+  try {
+    const context = [
+      `Handle: ${handle}`,
+      `Platform: ${platform}`,
+      delta != null ? `Rating delta: +${delta}` : null,
+      `New rating: ${newRating}`,
+      newRank ? `New rank: ${newRank}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    const groq = createGroq({ apiKey: groqApiKey });
+    const { text } = await generateText({
+      model: groq(MODEL),
+      system: QUOTE_SYSTEM_PROMPT,
+      prompt: `Write a congratulatory line for: ${context}`,
+      maxTokens: 50,
+      temperature: 1.0,
+    });
+    return text.trim();
+  } catch (error) {
+    console.error(
+      "[Quote] AI call failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return "";
+  }
+}
+
