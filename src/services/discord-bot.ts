@@ -11,9 +11,9 @@ import { Context, Data, Effect, Layer } from "effect"
 
 import { AppConfig } from "../config"
 import type { Contest } from "../domain/contest"
-import type { RatingSnapshot, TrackingPlatform } from "../domain/bot-state"
+import type { TrackingPlatform } from "../domain/bot-state"
 import { ContestDigestService, renderContestLine } from "./contest-digest"
-import { ProfileSourceService } from "./profile-sources"
+import { ProfileSourceError, ProfileSourceService } from "./profile-sources"
 import { StateStoreService } from "./state-store"
 import {
   formatDeliveryTime,
@@ -72,7 +72,12 @@ const MANAGE_CHANNELS = 0x10n
 const channelRef = (guildId: string, channelId: string): string => `discord:${guildId}:${channelId}`
 
 const platformLabel = (platform: TrackingPlatform): string =>
-  platform === "codeforces" ? "Codeforces" : "AtCoder"
+  platform === "codeforces" ? "codeforces" : "atcoder"
+
+const profileUrl = (platform: TrackingPlatform, handle: string): string =>
+  platform === "codeforces"
+    ? `https://codeforces.com/profile/${encodeURIComponent(handle)}`
+    : `https://atcoder.jp/users/${encodeURIComponent(handle)}`
 
 const buildHelpMessage = (defaultTimeZone: string, defaultTime: string): string =>
   [
@@ -89,22 +94,6 @@ const buildHelpMessage = (defaultTimeZone: string, defaultTime: string): string 
     "`/track-add`  `/track-remove`  `/track-list`  `/leaderboard`  `/rating`  `/compare`  `/streak`"
   ].join("\n")
 
-const buildAnnouncementMessage = (
-  platform: TrackingPlatform,
-  handle: string,
-  previous: RatingSnapshot,
-  nextRating: number,
-  nextRank: string | null,
-  profileUrl: string
-): string => {
-  const oldRating = previous.rating ?? 0
-  const delta = nextRating - oldRating
-  const rank = nextRank ? `  ·  ${nextRank}` : ""
-  return [
-    `## ${platformLabel(platform)} — Rating Improved`,
-    `> **[${handle}](${profileUrl})**  \`${oldRating}\` → \`${nextRating}\`  *(+${delta})*${rank}`
-  ].join("\n")
-}
 
 const commandDefinitions = [
   {
@@ -284,6 +273,35 @@ export const DiscordBotServiceLive = Layer.scoped(
       formatDeliveryTime(config.defaultDeliveryHour, config.defaultDeliveryMinute)
     )
 
+    const fetchUsername = async (userId: string): Promise<string> => {
+      try {
+        const res = await fetch(`https://discord.com/api/v10/users/${userId}`, {
+          headers: { Authorization: `Bot ${config.discordBotToken}` }
+        })
+        if (!res.ok) return userId
+        const data = await res.json() as { username?: string; global_name?: string }
+        return data.global_name ?? data.username ?? userId
+      } catch {
+        return userId
+      }
+    }
+
+    const renderTrackedByUser = async (handles: ReadonlyArray<import("../domain/bot-state").TrackedHandle>): Promise<string> => {
+      const grouped = new Map<string, typeof handles[number][]>()
+      for (const h of handles) {
+        const group = grouped.get(h.createdByUserId) ?? []
+        group.push(h)
+        grouped.set(h.createdByUserId, group)
+      }
+      const sections = await Promise.all(
+        [...grouped.entries()].map(async ([userId, hs]) => {
+          const name = await fetchUsername(userId)
+          return `**${name}**\n` + hs.map(h => `  [${h.handle}](${profileUrl(h.platform, h.handle)})  ${platformLabel(h.platform)}`).join("\n")
+        })
+      )
+      return sections.join("\n\n")
+    }
+
     const chat = new Chat({
       userName: config.botUserName,
       adapters: { discord: createDiscordAdapter() },
@@ -313,9 +331,9 @@ export const DiscordBotServiceLive = Layer.scoped(
     ): Promise<{ readonly guildId: string; readonly channelId: string; readonly guildName: string | null; readonly channelName: string | null } | null> => {
       const raw = asInteractionRaw(event.raw)
       const context = getChannelContext(raw)
-      if (!context) { await post("⚠️ Use this command inside a Discord server text channel."); return null }
-      if (isUnsupportedChannelType(raw)) { await post("⚠️ Run this command in a regular text or announcement channel."); return null }
-      if (!hasAdminPermissions(raw)) { await post("⚠️ You need `Manage Channels` or `Administrator` permission for this command."); return null }
+      if (!context) { await post("Use this command inside a Discord server text channel."); return null }
+      if (isUnsupportedChannelType(raw)) { await post("Run this command in a regular text or announcement channel."); return null }
+      if (!hasAdminPermissions(raw)) { await post("You need `Manage Channels` or `Administrator` permission for this command."); return null }
       return context
     }
 
@@ -326,11 +344,13 @@ export const DiscordBotServiceLive = Layer.scoped(
       chat.onSlashCommand(name, (event) => {
         const post = async (msg: string) => { await event.channel.post(msg) }
         return (async () => {
+          const start = Date.now()
           try {
-            console.log(`[Command] ${name} | User: ${event.user.userName}`)
+            await Effect.runPromise(Effect.logInfo(`[cmd] ${name}  user=${event.user.userName}`))
             await handler(event, post)
+            await Effect.runPromise(Effect.logDebug(`[cmd] ${name}  done  ${Date.now() - start}ms`))
           } catch (error) {
-            console.error(`[Command] ${name} failed:`, error)
+            await Effect.runPromise(Effect.logError(`[cmd] ${name}  failed  ${error instanceof Error ? error.message : String(error)}`))
             try { await post("Error: The command failed to complete.") } catch {}
           }
         })()
@@ -380,8 +400,8 @@ export const DiscordBotServiceLive = Layer.scoped(
         `**Tracked Handles** *(${trackedHandles.length})*`,
         "",
         trackedHandles.length === 0
-          ? "*none*"
-          : trackedHandles.map(t => `> \`${platformLabel(t.platform)}\`  ${t.handle}`).join("\n")
+          ? "none"
+          : await renderTrackedByUser(trackedHandles)
       ].join("\n"))
     })
 
@@ -447,7 +467,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       const raw = asInteractionRaw(event.raw)
       const timeZone = await getChannelTimeZone(raw.channel_id)
       const contest = await Effect.runPromise(digestService.getNextUpcomingContest(timeZone))
-      if (!contest) { await post("📭 No upcoming contests found right now."); return }
+      if (!contest) { await post("No upcoming contests found right now."); return }
       await post(["## Next Up", "", renderContestLine(contest, timeZone)].join("\n"))
     })
 
@@ -455,8 +475,8 @@ export const DiscordBotServiceLive = Layer.scoped(
       const raw = asInteractionRaw(event.raw)
       const timeZone = await getChannelTimeZone(raw.channel_id)
       const contest = await Effect.runPromise(digestService.pickLuckyContest(timeZone))
-      if (!contest) { await post("🎲 No contest was available for a lucky pick."); return }
-      await post(["## Lucky Pick", "> -# bias: contests ≤ 2h", "", renderContestLine(contest, timeZone)].join("\n"))
+      if (!contest) { await post("No contest was available for a lucky pick."); return }
+      await post(["## Lucky Pick", "> -# bias: contests under 2h", "", renderContestLine(contest, timeZone)].join("\n"))
     })
 
     onCommand("/track-add", async (event, post) => {
@@ -465,13 +485,21 @@ export const DiscordBotServiceLive = Layer.scoped(
       const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handle = options.get("handle")
-      if (!platform || !handle) { await post("⚠️ Both `platform` and `handle` are required."); return }
-      const profile = await Effect.runPromise(profileService.fetchProfile(platform, handle))
+      if (!platform || !handle) { await post("Both `platform` and `handle` are required."); return }
+      const profileResult = await Effect.runPromise(
+        profileService.fetchProfile(platform, handle).pipe(Effect.either)
+      )
+      if (profileResult._tag === "Left") {
+        const err = profileResult.left
+        await post(`Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`)
+        return
+      }
+      const profile = profileResult.right
       const trackedHandle = await Effect.runPromise(
         store.addTrackedHandle(context.channelId, platform, profile.handle, normalizeHandle(profile.handle), event.user.userId)
       )
-      if (!trackedHandle) { await post("⚠️ Run `/setup` first before adding tracked handles."); return }
-      await post(`✅ **Tracking Started:** Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this channel.`)
+      if (!trackedHandle) { await post("Run `/setup` first before adding tracked handles."); return }
+      await post(`**Tracking Started:** Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this channel.`)
     })
 
     onCommand("/track-remove", async (event, post) => {
@@ -480,34 +508,40 @@ export const DiscordBotServiceLive = Layer.scoped(
       const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handle = options.get("handle")
-      if (!platform || !handle) { await post("⚠️ Both `platform` and `handle` are required."); return }
+      if (!platform || !handle) { await post("Both `platform` and `handle` are required."); return }
       const removed = await Effect.runPromise(store.removeTrackedHandle(context.channelId, platform, normalizeHandle(handle)))
-      await post(removed ? `🗑️ **Removed:** Stopped tracking ${platformLabel(platform)} handle \`${handle}\`.` : "⚠️ That handle is not currently tracked in this channel.")
+      await post(removed ? `**Removed:** Stopped tracking ${platformLabel(platform)} handle \`${handle}\`.` : "That handle is not currently tracked in this channel.")
     })
 
     onCommand("/track-list", async (event, post) => {
       const raw = asInteractionRaw(event.raw)
       const context = getChannelContext(raw)
-      if (!context) { await post("⚠️ Use this command inside a Discord server text channel."); return }
+      if (!context) { await post("Use this command inside a Discord server text channel."); return }
       const trackedHandles = await Effect.runPromise(store.listTrackedHandlesByChannel(context.channelId))
-      await post(["## Tracked Handles", "", trackedHandles.length === 0 ? "*none*" : trackedHandles.map(t => `> \`${platformLabel(t.platform)}\`  ${t.handle}`).join("\n")].join("\n"))
+      await post([
+        "## Tracked Handles",
+        "",
+        trackedHandles.length === 0
+          ? "none"
+          : await renderTrackedByUser(trackedHandles)
+      ].join("\n"))
     })
 
     onCommand("/leaderboard", async (event, post) => {
       const raw = asInteractionRaw(event.raw)
       const context = getChannelContext(raw)
-      if (!context) { await post("⚠️ Use this command inside a Discord server text channel."); return }
+      if (!context) { await post("Use this command inside a Discord server text channel."); return }
       const leaderboard = await Effect.runPromise(store.getLeaderboard(context.channelId))
-      if (leaderboard.length === 0) { await post("ℹ️ No rated users tracked in this channel yet."); return }
+      if (leaderboard.length === 0) { await post("No rated users tracked in this channel yet."); return }
       await post([
         "## Leaderboard",
         "",
         ...leaderboard.map((entry, i) => {
-          const rank = entry.rankLabel ? `  *${entry.rankLabel}*` : ""
-          const profileUrl = entry.platform === "codeforces"
+          const url = entry.platform === "codeforces"
             ? `https://codeforces.com/profile/${encodeURIComponent(entry.handle)}`
             : `https://atcoder.jp/users/${encodeURIComponent(entry.handle)}`
-          return `> **${i + 1}.** [${entry.handle}](${profileUrl})  \`${platformLabel(entry.platform)}\`  **${entry.rating ?? "Unrated"}**${rank}`
+          const rank = entry.rankLabel ? `  ${entry.rankLabel}` : ""
+          return `**${i + 1}.** [${entry.handle}](${url})  ${platformLabel(entry.platform)}  ${entry.rating ?? "unrated"}${rank}`
         })
       ].join("\n"))
     })
@@ -516,8 +550,13 @@ export const DiscordBotServiceLive = Layer.scoped(
       const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handle = options.get("handle")
-      if (!platform || !handle) { await post("⚠️ Both `platform` and `handle` are required."); return }
-      const profile = await Effect.runPromise(profileService.fetchProfile(platform, handle))
+      if (!platform || !handle) { await post("Both `platform` and `handle` are required."); return }
+      const profileResult = await Effect.runPromise(profileService.fetchProfile(platform, handle).pipe(Effect.either))
+      if (profileResult._tag === "Left") {
+        await post(`Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`)
+        return
+      }
+      const profile = profileResult.right
       await post([
         `## ${platformLabel(platform)} Rating`,
         `> **[${profile.handle}](${profile.profileUrl})**  \`${profile.rating ?? "Unrated"}\`${profile.rankLabel ? `  *${profile.rankLabel}*` : ""}${profile.maxRating ? `  ·  max \`${profile.maxRating}\`` : ""}`
@@ -529,11 +568,21 @@ export const DiscordBotServiceLive = Layer.scoped(
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handleA = options.get("handle_a")
       const handleB = options.get("handle_b")
-      if (!platform || !handleA || !handleB) { await post("⚠️ `platform`, `handle_a`, and `handle_b` are required."); return }
-      const [left, right] = await Promise.all([
-        Effect.runPromise(profileService.fetchProfile(platform, handleA)),
-        Effect.runPromise(profileService.fetchProfile(platform, handleB))
+      if (!platform || !handleA || !handleB) { await post("`platform`, `handle_a`, and `handle_b` are required."); return }
+      const [leftResult, rightResult] = await Promise.all([
+        Effect.runPromise(profileService.fetchProfile(platform, handleA).pipe(Effect.either)),
+        Effect.runPromise(profileService.fetchProfile(platform, handleB).pipe(Effect.either))
       ])
+      if (leftResult._tag === "Left") {
+        await post(`Could not find \`${handleA}\` on ${platformLabel(platform)}.`)
+        return
+      }
+      if (rightResult._tag === "Left") {
+        await post(`Could not find \`${handleB}\` on ${platformLabel(platform)}.`)
+        return
+      }
+      const left = leftResult.right
+      const right = rightResult.right
       const fmt = (p: typeof left) => `> **[${p.handle}](${p.profileUrl})**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`
       await post([`## ${platformLabel(platform)} Comparison`, "", fmt(left), fmt(right)].join("\n"))
     })
@@ -541,13 +590,13 @@ export const DiscordBotServiceLive = Layer.scoped(
     onCommand("/streak", async (event, post) => {
       const raw = asInteractionRaw(event.raw)
       const context = getChannelContext(raw)
-      if (!context) { await post("⚠️ Use this command inside a Discord server text channel."); return }
+      if (!context) { await post("Use this command inside a Discord server text channel."); return }
       const options = flattenOptions(raw.data?.options)
       const platform = options.get("platform") as TrackingPlatform | undefined
       const handle = options.get("handle")
-      if (!platform || !handle) { await post("⚠️ Both `platform` and `handle` are required."); return }
+      if (!platform || !handle) { await post("Both `platform` and `handle` are required."); return }
       const trackedHandle = await Effect.runPromise(store.getTrackedHandleByChannel(context.channelId, platform, normalizeHandle(handle)))
-      if (!trackedHandle) { await post("⚠️ That handle is not tracked in this channel yet."); return }
+      if (!trackedHandle) { await post("That handle is not tracked in this channel yet."); return }
       const count = await Effect.runPromise(store.countImprovementSnapshots(context.channelId, platform, trackedHandle.handleNormalized))
       await post(`## Streak\n> \`${trackedHandle.handle}\`  **${count}** improvement${count === 1 ? "" : "s"} recorded`)
     })
