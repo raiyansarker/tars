@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import {
   normalizeCodeforcesContests,
   parseAtCoderContestsFromHtml
-} from "./contest-sources"
+} from "../../src/services/contest-sources"
 
 describe("contest source normalization", () => {
   test("normalizes future Codeforces contests and drops finished ones", () => {

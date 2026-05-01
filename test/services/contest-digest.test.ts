@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
-import type { Contest } from "../domain/contest"
-import { buildDigestMessage } from "./contest-digest"
+import type { Contest } from "../../src/domain/contest"
+import { buildDigestMessage } from "../../src/services/contest-digest"
 
 const contests: ReadonlyArray<Contest> = [
   {

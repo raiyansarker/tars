@@ -1,6 +1,6 @@
 import { expect, test, describe } from "bun:test"
-import { isProfileImproved, isProfileUnchanged, normalizeHandle } from "./tracking"
-import type { RatingSnapshot, TrackedProfile } from "../domain/bot-state"
+import { isProfileImproved, isProfileUnchanged, normalizeHandle } from "../../src/lib/tracking"
+import type { RatingSnapshot, TrackedProfile } from "../../src/domain/bot-state"
 
 describe("tracking logic", () => {
   const mockDate = new Date()

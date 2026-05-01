@@ -6,7 +6,7 @@ import {
   isDigestDue,
   parseAtCoderDate,
   parseDeliveryTime
-} from "./time"
+} from "../../src/lib/time"
 
 describe("time helpers", () => {
   test("formats date keys in Asia/Dhaka", () => {

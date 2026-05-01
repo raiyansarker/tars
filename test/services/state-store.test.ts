@@ -1,7 +1,7 @@
 import { expect, test, describe, mock } from "bun:test"
 import { Effect, Layer, Context, ConfigProvider, LogLevel, Option } from "effect"
-import { AppConfig } from "../config"
-import { StateStoreService, StateStoreServiceLive, type UpsertSubscriptionInput } from "./state-store"
+import { AppConfig } from "../../src/config"
+import { StateStoreService, StateStoreServiceLive, type UpsertSubscriptionInput } from "../../src/services/state-store"
 
 // Very simple in-memory Redis mock
 const store = new Map<string, string>()
