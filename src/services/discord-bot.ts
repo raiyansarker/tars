@@ -24,7 +24,7 @@ import {
   parseDeliveryTime,
   computeNextDeliveryAt,
 } from "../lib/time";
-import { formatTrackedProfileSummary, normalizeHandle, escMd } from "../lib/tracking";
+import { formatTrackedProfileSummary, normalizeHandle, escHandle } from "../lib/tracking";
 
 export class DiscordIntegrationError extends Data.TaggedError(
   "DiscordIntegrationError",
@@ -506,7 +506,7 @@ export const DiscordBotServiceLive = Layer.scoped(
             hs
               .map(
                 (h) =>
-                  `  [${escMd(h.handle)}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}`,
+                  `  [${escHandle(h.handle)}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}`,
               )
               .join("\n")
           );
@@ -1017,7 +1017,7 @@ export const DiscordBotServiceLive = Layer.scoped(
                 ? `https://codeforces.com/profile/${encodeURIComponent(entry.handle)}`
                 : `https://atcoder.jp/users/${encodeURIComponent(entry.handle)}`;
             const rank = entry.rankLabel ? `  ${entry.rankLabel}` : "";
-            return `**${i + 1}.** [${escMd(entry.handle)}](<${url}>)  ${platformLabel(entry.platform)}  ${entry.rating ?? "unrated"}${rank}`;
+            return `**${i + 1}.** [${escHandle(entry.handle)}](<${url}>)  ${platformLabel(entry.platform)}  ${entry.rating ?? "unrated"}${rank}`;
           }),
         ].join("\n"),
       );
@@ -1044,7 +1044,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(
         [
           `## ${platformLabel(platform)} Rating`,
-          `> **[${escMd(profile.handle)}](<${profile.profileUrl}>)**  \`${profile.rating ?? "Unrated"}\`${profile.rankLabel ? `  *${profile.rankLabel}*` : ""}${profile.maxRating ? `  ·  max \`${profile.maxRating}\`` : ""}`,
+          `> **[${escHandle(profile.handle)}](<${profile.profileUrl}>)**  \`${profile.rating ?? "Unrated"}\`${profile.rankLabel ? `  *${profile.rankLabel}*` : ""}${profile.maxRating ? `  ·  max \`${profile.maxRating}\`` : ""}`,
         ].join("\n"),
       );
     });
@@ -1081,7 +1081,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       const left = leftResult.right;
       const right = rightResult.right;
       const fmt = (p: typeof left) =>
-        `> **[${escMd(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`;
+        `> **[${escHandle(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`;
       await post(
         [
           `## ${platformLabel(platform)} Comparison`,

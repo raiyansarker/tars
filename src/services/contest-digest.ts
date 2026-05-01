@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Option } from "effect"
 
 import type { Contest, ContestDigest, ContestPlatform } from "../domain/contest"
-import { escMd } from "../lib/tracking";
 import {
   addDaysToDateKey,
   filterContestsByDateKey,
@@ -53,7 +52,7 @@ export const renderContestLine = (contest: Contest, timeZone: string): string =>
   const durationStr = formatDuration(contest.durationMinutes)
   const rated = contest.ratedRange ? `  ·  Rated \`${contest.ratedRange}\`` : ""
   return [
-    `**[${escMd(contest.title)}](<${contest.url}>)**`,
+    `**[${contest.title}](<${contest.url}>)**`,
     `> \`${timeStr}\`  ·  \`${durationStr}\`${rated}`,
     ""
   ].join("\n")

@@ -1,5 +1,5 @@
 import type { SchedulerTrackedHandle } from "../domain/bot-state"
-import { escMd } from "./tracking"
+import { escHandle } from "./tracking"
 
 export const buildTrackingAnnouncement = (
   trackedHandle: SchedulerTrackedHandle,
@@ -18,7 +18,7 @@ export const buildTrackingAnnouncement = (
     : `> now at **${nextRating}**${rank}`
   return [
     `<@${trackedHandle.handleCreatedByUserId}>`,
-    `## [${escMd(trackedHandle.handle)}](<${profileUrl}>) just improved on ${platform}`,
+    `## [${escHandle(trackedHandle.handle)}](<${profileUrl}>) just improved on ${platform}`,
     deltaLine
   ].join("\n")
 }
