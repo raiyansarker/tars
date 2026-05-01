@@ -103,6 +103,8 @@ const buildHelpMessage = (
     "`/disable` — Stop scheduled digests",
     "`/time` — Change the daily delivery time",
     "`/timezone` — Change the timezone",
+    "`/mention` — Set a role to ping when the digest is posted",
+    "`/mention-clear` — Remove the role mention",
     "`/test-digest` — Preview what tomorrow's digest looks like",
     "",
     "**Info**",
@@ -347,13 +349,13 @@ const commandDefinitions = [
   },
   { name: "help", description: "Show command help and setup guidance." },
   {
-    name: "role",
+    name: "mention",
     description: "Set a role to mention when the daily digest is posted.",
     options: [
       { type: 8, name: "value", description: "Role to mention", required: true }
     ]
   },
-  { name: "role-clear", description: "Remove the role mention from the daily digest." }
+  { name: "mention-clear", description: "Remove the role mention from the daily digest." }
 ]
 
 const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
@@ -741,7 +743,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       );
     });
 
-    onCommand("/role", async (event, post) => {
+    onCommand("/mention", async (event, post) => {
       const context = await requireAdminChannel(event, post)
       if (!context) return
       const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
@@ -751,7 +753,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(updated ? `Role set. Digest will mention <@&${roleId}>.` : "Run `/setup` first.")
     })
 
-    onCommand("/role-clear", async (event, post) => {
+    onCommand("/mention-clear", async (event, post) => {
       const context = await requireAdminChannel(event, post)
       if (!context) return
       const updated = await Effect.runPromise(store.updateSubscriptionMentionRole(context.channelId, null))
