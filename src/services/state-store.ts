@@ -664,7 +664,7 @@ export const StateStoreServiceLive = Layer.scoped(
           )
 
           return results
-            .filter((r): r is NonNullable<typeof r> => r !== null)
+            .filter((r): r is NonNullable<typeof r> => r !== null && r.platform === "codeforces")
             .sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1))
             .slice(0, 10)
         })

@@ -1019,12 +1019,9 @@ export const DiscordBotServiceLive = Layer.scoped(
           "## Leaderboard",
           "",
           ...leaderboard.map((entry, i) => {
-            const url =
-              entry.platform === "codeforces"
-                ? `https://codeforces.com/profile/${encodeURIComponent(entry.handle)}`
-                : `https://atcoder.jp/users/${encodeURIComponent(entry.handle)}`;
+            const url = `https://codeforces.com/profile/${encodeURIComponent(entry.handle)}`;
             const rank = entry.rankLabel ? `  ${entry.rankLabel}` : "";
-            return `**${i + 1}.** [${escHandle(entry.handle)}](<${url}>)  ${platformLabel(entry.platform)}  ${entry.rating ?? "unrated"}${rank}`;
+            return `**${i + 1}.** [${escHandle(entry.handle)}](<${url}>)  ${entry.rating ?? "unrated"}${rank}`;
           }),
         ].join("\n"),
       );

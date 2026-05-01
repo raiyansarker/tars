@@ -163,6 +163,47 @@ describe("StateStoreService", () => {
     await Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(testLayer))))
   })
 
+  test("getLeaderboard returns only codeforces entries, sorted by rating", async () => {
+    store.clear()
+    hashStore.clear()
+    setStore.clear()
+
+    const program = Effect.gen(function* () {
+      const state = yield* StateStoreService
+
+      const guildId = "g-lb"
+      const trackedSetKey = `tars:tracked:guild:${guildId}`
+
+      const entries = [
+        { id: `${guildId}:codeforces:tourist`, platform: "codeforces", handle: "tourist", rating: 3800 },
+        { id: `${guildId}:codeforces:neal`, platform: "codeforces", handle: "neal", rating: 3600 },
+        { id: `${guildId}:atcoder:rng_58`, platform: "atcoder", handle: "rng_58", rating: 3900 },
+      ]
+
+      yield* Effect.promise(async () => {
+        for (const e of entries) {
+          await mockClient.sadd(trackedSetKey, e.id)
+          await mockClient.hset(`tars:tracked:meta:${e.id}`, {
+            handle: e.handle,
+            platform: e.platform,
+            enabled: "true",
+          })
+          await mockClient.set(
+            `tars:snapshot:latest:${e.id}`,
+            JSON.stringify({ rating: e.rating, rankLabel: null, maxRating: null })
+          )
+        }
+      })
+
+      const leaderboard = yield* state.getLeaderboard(guildId)
+
+      expect(leaderboard.every(e => e.platform === "codeforces")).toBe(true)
+      expect(leaderboard.map(e => e.handle)).toEqual(["tourist", "neal"])
+    })
+
+    await Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(testLayer))))
+  })
+
   test("tracked-user improvement posts exactly one congratulation message per new better snapshot", async () => {
     store.clear()
     hashStore.clear()
