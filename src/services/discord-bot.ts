@@ -355,7 +355,14 @@ const commandDefinitions = [
       { type: 8, name: "value", description: "Role to mention", required: true }
     ]
   },
-  { name: "mention-clear", description: "Remove the role mention from the daily digest." }
+  { name: "mention-clear", description: "Remove the role mention from the daily digest." },
+  {
+    name: "info",
+    description: "Show tracked handles and ratings for a user.",
+    options: [
+      { type: 6, name: "user", description: "The Discord user to look up", required: true },
+    ],
+  },
 ]
 
 const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
@@ -1127,6 +1134,43 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(
         `## Streak\n> \`${trackedHandle.handle}\`  **${count}** improvement${count === 1 ? "" : "s"} recorded`,
       );
+    });
+
+    onCommand("/info", async (event, post) => {
+      const raw = asInteractionRaw(event.raw);
+      const context = getChannelContext(raw);
+      if (!context) {
+        await post("Use this command inside a Discord server text channel.");
+        return;
+      }
+      const targetUserId = flattenOptions(raw.data?.options).get("user");
+      if (!targetUserId) {
+        await post("Provide a user to look up.");
+        return;
+      }
+      const allHandles = await Effect.runPromise(
+        store.listTrackedHandlesByGuild(context.guildId),
+      );
+      const handles = allHandles.filter((h) => h.createdByUserId === targetUserId);
+      if (handles.length === 0) {
+        await post("No tracked handles found for that user.");
+        return;
+      }
+      const [displayName, snapshots] = await Promise.all([
+        fetchUsername(targetUserId),
+        Promise.all(
+          handles.map((h) =>
+            Effect.runPromise(store.getLatestRatingSnapshot(h.id)),
+          ),
+        ),
+      ]);
+      const lines = handles.map((h, i) => {
+        const snap = snapshots[i];
+        const rating = snap?.rating != null ? `\`${snap.rating}\`` : "`Unrated`";
+        const rank = snap?.rankLabel ? `  *${snap.rankLabel}*` : "";
+        return `[${escHandle(h.handle)}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}  ${rating}${rank}`;
+      });
+      await post([`## ${displayName}'s Handles`, "", ...lines].join("\n"));
     });
 
     if (config.isDev) {
