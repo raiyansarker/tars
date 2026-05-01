@@ -1,0 +1,25 @@
+{
+  "name": "contest-digest-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chat-adapter/discord": "^4.26.0",
+    "@chat-adapter/state-redis": "^4.26.0",
+    "@effect/platform": "^0.96.1",
+    "@effect/platform-bun": "^0.89.0",
+    "chat": "^4.26.0",
+    "effect": "^3.21.2",
+    "elysia": "^1.4.28",
+    "redis": "^5.12.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "typescript": "^6.0.3"
+  }
+}
