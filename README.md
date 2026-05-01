@@ -1,5 +1,7 @@
 # TARS - Discord Contest Bot
 
+[![Better Stack Badge](https://uptime.betterstack.com/status-badges/v1/monitor/2la8v.svg)](https://uptime.betterstack.com/?utm_source=status_badge)
+
 A professional, multi-tenant Discord bot built with **Bun** and **Effect-TS**. It provides daily contest digests (Codeforces & AtCoder) and real-time rating tracking for competitive programmers.
 
 ## 🚀 Features
