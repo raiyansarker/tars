@@ -98,3 +98,39 @@ describe("DbService — claim/release (Redis)", () => {
       expect(claimed2).toBe(false)
     }))
   })
+
+  test("tracking announcement claim is exclusive per snapshot, not per handle", async () => {
+    store.clear()
+    await run(Effect.gen(function* () {
+      const db = yield* DbService
+      expect(yield* db.claimTrackingAnnouncement("t1", "snap1")).toBe(true)
+      expect(yield* db.claimTrackingAnnouncement("t1", "snap1")).toBe(false)
+      expect(yield* db.claimTrackingAnnouncement("t1", "snap2")).toBe(true)
+    }))
+  })
+})
+
+describe("DbService — leaderboard", () => {
+  test("returns only codeforces entries sorted by rating descending", async () => {
+    await run(Effect.gen(function* () {
+      const db = yield* DbService
+      const guildId = "g-lb"
+
+      yield* db.addTrackedHandle(guildId, "codeforces", "tourist", "tourist", "u1")
+      yield* db.addTrackedHandle(guildId, "codeforces", "neal", "neal", "u1")
+      yield* db.addTrackedHandle(guildId, "atcoder", "rng_58", "rng_58", "u1")
+
+      const [th1, th2] = yield* Effect.all([
+        db.getTrackedHandleByGuild(guildId, "codeforces", "tourist"),
+        db.getTrackedHandleByGuild(guildId, "codeforces", "neal"),
+      ])
+
+      yield* db.insertRatingSnapshot({ trackedHandleId: th1!.id, rating: 3800, rankLabel: "Legendary Grandmaster", maxRating: 3800, isImprovement: false, rawPayloadJson: {} })
+      yield* db.insertRatingSnapshot({ trackedHandleId: th2!.id, rating: 3600, rankLabel: "Legendary Grandmaster", maxRating: 3600, isImprovement: false, rawPayloadJson: {} })
+
+      const leaderboard = yield* db.getLeaderboard(guildId)
+      expect(leaderboard.every((e) => e.platform === "codeforces")).toBe(true)
+      expect(leaderboard.map((e) => e.handle)).toEqual(["tourist", "neal"])
+    }))
+  })
+})
