@@ -148,3 +148,303 @@ const commandDefinitions = [
         ],
       },
       {
+        type: 1,
+        name: "mention",
+        description: "Set a role to ping with the digest.",
+        options: [
+          {
+            type: 8,
+            name: "value",
+            description: "Role to mention",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "mention-clear",
+        description: "Remove the role mention.",
+      },
+      { type: 1, name: "test", description: "Preview tomorrow's digest." },
+      {
+        type: 1,
+        name: "status",
+        description: "Show digest schedule for this channel.",
+      },
+    ],
+  },
+  {
+    name: "channel",
+    description: "Manage bot command channels for this server.",
+    default_member_permissions: ADMIN_PERMISSION,
+    options: [
+      {
+        type: 1,
+        name: "allow",
+        description: "Allow bot commands in this channel.",
+      },
+      {
+        type: 1,
+        name: "disallow",
+        description: "Remove this channel from the allowlist.",
+      },
+      {
+        type: 1,
+        name: "list",
+        description: "List all allowed command channels.",
+      },
+    ],
+  },
+  {
+    name: "track",
+    description: "Manage tracked handles for this server.",
+    options: [
+      {
+        type: 1,
+        name: "add",
+        description: "Start tracking a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          {
+            type: 3,
+            name: "handle",
+            description: "Handle to track",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "remove",
+        description: "Stop tracking a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          {
+            type: 3,
+            name: "handle",
+            description: "Handle to remove",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "list",
+        description: "List tracked handles in this server.",
+      },
+    ],
+  },
+  {
+    name: "track-for",
+    description: "Add tracking for another user (admin only).",
+    default_member_permissions: ADMIN_PERMISSION,
+    options: [
+      { type: 6, name: "user", description: "Discord user", required: true },
+      {
+        type: 3,
+        name: "platform",
+        description: "Platform",
+        required: true,
+        choices: PLATFORM_CHOICES,
+      },
+      {
+        type: 3,
+        name: "handle",
+        description: "Handle to track",
+        required: true,
+      },
+    ],
+  },
+  {
+    name: "contest",
+    description: "Browse upcoming contests.",
+    options: [
+      { type: 1, name: "today", description: "Contests happening today." },
+      { type: 1, name: "tomorrow", description: "Tomorrow's contests." },
+      {
+        type: 1,
+        name: "upcoming",
+        description: "Contests over the next N days.",
+        options: [
+          {
+            type: 4,
+            name: "days",
+            description: "Days to look ahead (default 7, max 30)",
+            required: false,
+          },
+        ],
+      },
+      { type: 1, name: "next", description: "The very next upcoming contest." },
+      {
+        type: 1,
+        name: "lucky",
+        description: "Random contest from tomorrow's pool.",
+      },
+    ],
+  },
+  {
+    name: "profile",
+    description: "Look up competitive programming profiles.",
+    options: [
+      {
+        type: 1,
+        name: "rating",
+        description: "Current rating for a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          { type: 3, name: "handle", description: "Handle", required: true },
+        ],
+      },
+      {
+        type: 1,
+        name: "compare",
+        description: "Compare two handles.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          {
+            type: 3,
+            name: "handle_a",
+            description: "First handle",
+            required: true,
+          },
+          {
+            type: 3,
+            name: "handle_b",
+            description: "Second handle",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "streak",
+        description: "Rating improvements recorded for a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          { type: 3, name: "handle", description: "Handle", required: true },
+        ],
+      },
+      {
+        type: 1,
+        name: "info",
+        description: "Tracked handles and ratings for a Discord user.",
+        options: [
+          {
+            type: 6,
+            name: "user",
+            description: "Discord user to look up",
+            required: true,
+          },
+        ],
+      },
+    ],
+  },
+  { name: "leaderboard", description: "Top 10 rated users in this server." },
+  {
+    name: "random",
+    description: "Random Codeforces problem suited to your rating.",
+    options: [
+      {
+        type: 3,
+        name: "difficulty",
+        description: "Difficulty relative to your rating",
+        required: false,
+        choices: [
+          { name: "easy (+-100)", value: "easy" },
+          { name: "medium (+200-400)", value: "medium" },
+          { name: "hard (+400-600)", value: "hard" },
+        ],
+      },
+    ],
+  },
+  { name: "help", description: "Show command help." },
+];
+
+const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
+  if (!raw.member?.permissions) return false;
+  const p = BigInt(raw.member.permissions);
+  return (
+    (p & ADMINISTRATOR) === ADMINISTRATOR ||
+    (p & MANAGE_CHANNELS) === MANAGE_CHANNELS
+  );
+};
+
+const flattenOptions = (
+  options: ReadonlyArray<DiscordInteractionOption> | undefined,
+): Map<string, string> => {
+  const values = new Map<string, string>();
+  const walk = (items: ReadonlyArray<DiscordInteractionOption> | undefined) => {
+    if (!items) return;
+    for (const item of items) {
+      if (item.name && item.value !== undefined)
+        values.set(item.name, String(item.value));
+      if (item.options) walk(item.options);
+    }
+  };
+  walk(options);
+  return values;
+};
+
+const asInteractionRaw = (raw: unknown): DiscordInteractionRaw =>
+  raw as DiscordInteractionRaw;
+
+const getChannelContext = (raw: DiscordInteractionRaw) => {
+  if (!raw.guild_id || !raw.channel_id) return null;
+  return {
+    guildId: raw.guild_id,
+    channelId: raw.channel_id,
+    guildName: null,
+    channelName: raw.channel?.name ?? null,
+  };
+};
+
+const isUnsupportedChannelType = (raw: DiscordInteractionRaw): boolean => {
+  const t = raw.channel?.type;
+  return t === 11 || t === 12 || t === 15;
+};
+
+const buildHelpMessage = (defaultTimeZone: string, defaultTime: string) =>
+  [
+    "## Contest Digest Bot",
+    `> -# Default TZ \`${defaultTimeZone}\`  ·  Time \`${defaultTime}\``,
+    "",
+    "**Setup** *(admin only)*",
+    "`/digest setup` — Enable digests with a time and timezone",
+    "`/digest disable` — Stop scheduled digests",
+    "`/digest time` — Change delivery time",
+    "`/digest tz` — Change timezone",
+    "`/digest mention` — Set a role to ping",
+    "`/digest mention-clear` — Remove role mention",
+    "`/digest test` — Preview tomorrow's digest",
+    "`/digest status` — Show digest schedule",
+    "",
