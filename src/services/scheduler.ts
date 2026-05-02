@@ -5,7 +5,7 @@ import { type SchedulerTrackedHandle } from "../domain/bot-state"
 import { ContestDigestService } from "./contest-digest"
 import { DiscordBotService } from "./discord-bot"
 import { ProfileSourceService } from "./profile-sources"
-import { StateStoreService } from "./state-store"
+import { DbService } from "./db"
 import { getTomorrowDateKey, isDigestDue } from "../lib/time"
 import {
   isProfileImproved,
@@ -55,7 +55,7 @@ export const SchedulerServiceLive = Layer.effect(
     const config = yield* AppConfig
     const digestService = yield* ContestDigestService
     const bot = yield* DiscordBotService
-    const store = yield* StateStoreService
+    const store = yield* DbService
     const profileService = yield* ProfileSourceService
 
     const processDigests = (now: Date) =>
