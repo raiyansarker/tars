@@ -946,6 +946,16 @@ export const DiscordBotServiceLive = Layer.scoped(
           event.user.userId,
         ),
       );
+      await Effect.runPromise(
+        store.insertRatingSnapshot({
+          trackedHandleId: trackedHandle.id,
+          rating: profile.rating,
+          rankLabel: profile.rankLabel,
+          maxRating: profile.maxRating,
+          isImprovement: false,
+          rawPayloadJson: profile.rawPayload,
+        }),
+      );
       await post(
         `**Tracking Started:** Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this server.`,
       );
