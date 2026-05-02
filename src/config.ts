@@ -5,6 +5,8 @@ export interface AppConfig {
   readonly discordPublicKey: string
   readonly discordApplicationId: string
   readonly redisUrl: string
+  readonly tursoUrl: string
+  readonly tursoAuthToken: string
   readonly botUserName: string
   readonly port: number
   readonly defaultTimeZone: string
@@ -25,6 +27,8 @@ const AppConfigSource = Config.all({
   discordPublicKey: Config.string("DISCORD_PUBLIC_KEY"),
   discordApplicationId: Config.string("DISCORD_APPLICATION_ID"),
   redisUrl: Config.string("REDIS_URL"),
+  tursoUrl: Config.string("TURSO_DATABASE_URL"),
+  tursoAuthToken: Config.string("TURSO_AUTH_TOKEN").pipe(Config.withDefault("")),
   botUserName: Config.string("BOT_USER_NAME").pipe(Config.withDefault("tars")),
   port: Config.integer("PORT").pipe(Config.withDefault(3000)),
   defaultTimeZone: Config.string("DEFAULT_TIMEZONE").pipe(
