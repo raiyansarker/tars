@@ -495,7 +495,6 @@ export const DbServiceLive = Layer.scoped(
 
       getLeaderboard: (guildId) =>
         wrap("getLeaderboard", async () => {
-          // Single query: join latest snapshot per handle via subquery
           const rows = await db
             .select({
               handle: trackedHandles.handle,
@@ -504,35 +503,26 @@ export const DbServiceLive = Layer.scoped(
               rankLabel: ratingSnapshots.rankLabel,
             })
             .from(trackedHandles)
-            .leftJoin(
-              ratingSnapshots,
-              and(
-                eq(ratingSnapshots.trackedHandleId, trackedHandles.id),
-                eq(
-                  ratingSnapshots.capturedAt,
-                  db
-                    .select({ maxCapturedAt: sql<string>`MAX(${ratingSnapshots.capturedAt})` })
-                    .from(ratingSnapshots)
-                    .where(eq(ratingSnapshots.trackedHandleId, trackedHandles.id))
-                )
+            .innerJoin(ratingSnapshots, eq(ratingSnapshots.trackedHandleId, trackedHandles.id))
+            .where(and(
+              eq(trackedHandles.guildId, guildId),
+              eq(trackedHandles.enabled, true),
+              eq(trackedHandles.platform, "codeforces"),
+              eq(
+                ratingSnapshots.capturedAt,
+                db.select({ m: sql<string>`MAX(${ratingSnapshots.capturedAt})` })
+                  .from(ratingSnapshots)
+                  .where(eq(ratingSnapshots.trackedHandleId, trackedHandles.id))
               )
-            )
-            .where(
-              and(
-                eq(trackedHandles.guildId, guildId),
-                eq(trackedHandles.enabled, true),
-                eq(trackedHandles.platform, "codeforces"),
-              )
-            )
-          return rows
-            .map((r) => ({
-              handle: r.handle,
-              platform: r.platform as TrackingPlatform,
-              rating: r.rating ?? null,
-              rankLabel: r.rankLabel ?? null,
-            }))
-            .sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1))
-            .slice(0, 10)
+            ))
+            .orderBy(desc(ratingSnapshots.rating))
+            .limit(10)
+          return rows.map((r) => ({
+            handle: r.handle,
+            platform: r.platform as TrackingPlatform,
+            rating: r.rating ?? null,
+            rankLabel: r.rankLabel ?? null,
+          }))
         }),
 
       // ── Command channels ───────────────────────────────────────────────────
