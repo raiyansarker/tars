@@ -13,6 +13,7 @@ export interface AppConfig {
   readonly defaultDeliveryHour: number
   readonly defaultDeliveryMinute: number
   readonly schedulerPollMinutes: number
+  readonly trackingPollMinutes: number
   readonly contestCacheTtlSeconds: number
   readonly logLevel: LogLevel.LogLevel
   readonly selfUsageUrl: Option.Option<string>
@@ -41,7 +42,10 @@ const AppConfigSource = Config.all({
     Config.withDefault(0)
   ),
   schedulerPollMinutes: Config.integer("SCHEDULER_POLL_MINUTES").pipe(
-    Config.withDefault(10)
+    Config.withDefault(1)
+  ),
+  trackingPollMinutes: Config.integer("TRACKER_POLL_MINUTES").pipe(
+    Config.withDefault(60)
   ),
   contestCacheTtlSeconds: Config.integer("CONTEST_CACHE_TTL_SECONDS").pipe(
     Config.withDefault(300)
