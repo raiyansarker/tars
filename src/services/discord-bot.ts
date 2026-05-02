@@ -798,3 +798,860 @@ export const DiscordBotServiceLive = Layer.scoped(
             : "This channel was not configured yet.",
         );
         return;
+      }
+      if (sub === "time") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const parsedTime = options.get("value")
+          ? parseDeliveryTime(options.get("value")!)
+          : null;
+        if (!parsedTime) {
+          await post("Provide a valid 24-hour time like `21:00`.");
+          return;
+        }
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionDeliveryTime(
+            context.channelId,
+            parsedTime.hour,
+            parsedTime.minute,
+          ),
+        );
+        await post(
+          updated
+            ? `Delivery time changed to \`${formatDeliveryTime(updated.deliveryHour, updated.deliveryMinute)}\`.`
+            : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "tz") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const timezone = options.get("value");
+        if (!timezone || !isValidTimeZone(timezone)) {
+          await post("Provide a valid IANA timezone (e.g., `Asia/Dhaka`).");
+          return;
+        }
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionTimeZone(context.channelId, timezone),
+        );
+        await post(
+          updated
+            ? `Timezone changed to \`${updated.timezone}\`.`
+            : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "mention") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const roleId = options.get("value");
+        if (!roleId) {
+          await post("Provide a role.");
+          return;
+        }
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionMentionRole(context.channelId, roleId),
+        );
+        await post(
+          updated
+            ? `Role set. Digest will mention <@&${roleId}>.`
+            : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "mention-clear") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionMentionRole(context.channelId, null),
+        );
+        await post(
+          updated ? "Role mention cleared." : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "test") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const subscription = await Effect.runPromise(
+          db
+            .getSubscriptionByChannel(context.channelId)
+            .pipe(Effect.orElseSucceed(() => null)),
+        );
+        const timeZone = subscription?.timezone ?? config.defaultTimeZone;
+        await post(
+          (
+            await Effect.runPromise(
+              digestService.getDigest("tomorrow", timeZone),
+            )
+          ).message,
+        );
+        return;
+      }
+      if (sub === "status") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const subscription = await Effect.runPromise(
+          db
+            .getSubscriptionByChannel(context.channelId)
+            .pipe(Effect.orElseSucceed(() => null)),
+        );
+        if (!subscription) {
+          await post(
+            "This channel is not configured yet. Run `/digest setup time:<HH:MM> timezone:<IANA>`.",
+          );
+          return;
+        }
+        const nextRun = computeNextDeliveryAt(
+          new Date(),
+          subscription.timezone,
+          subscription.deliveryHour,
+          subscription.deliveryMinute,
+        );
+        await post(
+          [
+            `## Status — <#${subscription.channelId}>`,
+            `> Digest \`${subscription.enabled ? "on" : "off"}\`  ·  Timezone \`${subscription.timezone}\`  ·  Daily at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\`  ·  Next <t:${Math.floor(nextRun.getTime() / 1000)}:R>`,
+          ].join("\n"),
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/digest", digestHandler);
+    onCommand("/digest setup", digestHandler);
+    onCommand("/digest time", digestHandler);
+    onCommand("/digest tz", digestHandler);
+    onCommand("/digest mention", digestHandler);
+
+    // ── /channel ──────────────────────────────────────────────────────────────
+    const channelHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireAdminChannel(event, post);
+      if (!context) return;
+      const sub = asInteractionRaw(event.raw).data?.options?.[0]?.name;
+      if (sub === "allow") {
+        await Effect.runPromise(
+          db.addCommandChannel(context.guildId, context.channelId),
+        );
+        await post(
+          `<#${context.channelId}> added to the bot command allowlist.`,
+        );
+        return;
+      }
+      if (sub === "disallow") {
+        const removed = await Effect.runPromise(
+          db.removeCommandChannel(context.guildId, context.channelId),
+        );
+        await post(
+          removed
+            ? `Removed <#${context.channelId}> from the allowlist.`
+            : "This channel was not in the allowlist.",
+        );
+        return;
+      }
+      if (sub === "list") {
+        const allowed = await Effect.runPromise(
+          db
+            .listCommandChannels(context.guildId)
+            .pipe(Effect.orElseSucceed(() => [] as string[])),
+        );
+        await post(
+          allowed.length === 0
+            ? "No command channels configured yet."
+            : `Allowed channels: ${allowed.map((id) => `<#${id}>`).join(", ")}`,
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/channel", channelHandler);
+
+    // ── /contest subcommands ──────────────────────────────────────────────────
+    const contestHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
+      const raw = asInteractionRaw(event.raw);
+      const sub = raw.data?.options?.[0]?.name;
+      const timeZone = await getChannelTimeZone(raw.channel_id);
+      if (sub === "today") {
+        await post(
+          (await Effect.runPromise(digestService.getDigest("today", timeZone)))
+            .message,
+        );
+        return;
+      }
+      if (sub === "tomorrow") {
+        await post(
+          (
+            await Effect.runPromise(
+              digestService.getDigest("tomorrow", timeZone),
+            )
+          ).message,
+        );
+        return;
+      }
+      if (sub === "upcoming") {
+        const days = Math.min(
+          Math.max(
+            Number(flattenOptions(raw.data?.options).get("days") || "7"),
+            1,
+          ),
+          30,
+        );
+        await post(
+          (
+            await Effect.runPromise(
+              digestService.getUpcomingRange(days, timeZone),
+            )
+          ).message,
+        );
+        return;
+      }
+      if (sub === "next") {
+        const contest = await Effect.runPromise(
+          digestService.getNextUpcomingContest(timeZone),
+        );
+        if (!contest) {
+          await post("No upcoming contests found right now.");
+          return;
+        }
+        await post(
+          ["## Next Up", "", renderContestLine(contest, timeZone)].join("\n"),
+        );
+        return;
+      }
+      if (sub === "lucky") {
+        const contest = await Effect.runPromise(
+          digestService.pickLuckyContest(timeZone),
+        );
+        if (!contest) {
+          await post("No contest available for a lucky pick.");
+          return;
+        }
+        await post(
+          [
+            "## Lucky Pick",
+            "> -# bias: contests under 2h",
+            "",
+            renderContestLine(contest, timeZone),
+          ].join("\n"),
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/contest", contestHandler);
+    onCommand("/contest upcoming", contestHandler);
+
+    // ── /track subcommands ────────────────────────────────────────────────────
+    const trackHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
+      const raw = asInteractionRaw(event.raw);
+      const sub = raw.data?.options?.[0]?.name;
+      const options = flattenOptions(raw.data?.options);
+      if (sub === "add") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const profileResult = await Effect.runPromise(
+          profileService.fetchProfile(platform, handle).pipe(Effect.either),
+        );
+        if (profileResult._tag === "Left") {
+          await post(
+            `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
+          );
+          return;
+        }
+        const profile = profileResult.right;
+        const trackedHandle = await Effect.runPromise(
+          db.addTrackedHandle(
+            context.guildId,
+            platform,
+            profile.handle,
+            normalizeHandle(profile.handle),
+            event.user.userId,
+          ),
+        );
+        await Effect.runPromise(
+          db.insertRatingSnapshot({
+            trackedHandleId: trackedHandle.id,
+            rating: profile.rating,
+            rankLabel: profile.rankLabel,
+            maxRating: profile.maxRating,
+            isImprovement: false,
+            rawPayloadJson: profile.rawPayload,
+          }),
+        );
+        await post(
+          `Tracking started. Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this server.`,
+        );
+        return;
+      }
+      if (sub === "add-for") {
+        if (!hasAdminPermissions(asInteractionRaw(event.raw))) {
+          await post(
+            "You need `Manage Channels` or `Administrator` permission for this command.",
+          );
+          return;
+        }
+        const targetUserId = options.get("user");
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!targetUserId || !platform || !handle) {
+          await post("`user`, `platform`, and `handle` are required.");
+          return;
+        }
+        const profileResult = await Effect.runPromise(
+          profileService.fetchProfile(platform, handle).pipe(Effect.either),
+        );
+        if (profileResult._tag === "Left") {
+          await post(
+            `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
+          );
+          return;
+        }
+        const profile = profileResult.right;
+        const trackedHandle = await Effect.runPromise(
+          db.addTrackedHandle(
+            context.guildId,
+            platform,
+            profile.handle,
+            normalizeHandle(profile.handle),
+            targetUserId,
+          ),
+        );
+        await Effect.runPromise(
+          db.insertRatingSnapshot({
+            trackedHandleId: trackedHandle.id,
+            rating: profile.rating,
+            rankLabel: profile.rankLabel,
+            maxRating: profile.maxRating,
+            isImprovement: false,
+            rawPayloadJson: profile.rawPayload,
+          }),
+        );
+        await post(
+          `Tracking started. Monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` for <@${targetUserId}>.`,
+        );
+        return;
+      }
+      if (sub === "remove") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const removed = await Effect.runPromise(
+          db.removeTrackedHandle(
+            context.guildId,
+            platform,
+            normalizeHandle(handle),
+          ),
+        );
+        await post(
+          removed
+            ? `Stopped tracking ${platformLabel(platform)} handle \`${handle}\`.`
+            : "That handle is not currently tracked in this server.",
+        );
+        return;
+      }
+      if (sub === "list") {
+        const handles = await Effect.runPromise(
+          db.listTrackedHandlesByGuild(context.guildId),
+        );
+        await post(
+          [
+            "## Tracked Handles",
+            "",
+            handles.length === 0 ? "none" : await renderTrackedByUser(handles),
+          ].join("\n"),
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/track", trackHandler);
+    onCommand("/track add", trackHandler);
+    onCommand("/track remove", trackHandler);
+
+    onCommand("/track-for", async (event, post) => {
+      const context = await requireAdminChannel(event, post);
+      if (!context) return;
+      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
+      const targetUserId = options.get("user");
+      const platform = options.get("platform") as TrackingPlatform | undefined;
+      const handle = options.get("handle");
+      if (!targetUserId || !platform || !handle) {
+        await post("`user`, `platform`, and `handle` are required.");
+        return;
+      }
+      const profileResult = await Effect.runPromise(
+        profileService.fetchProfile(platform, handle).pipe(Effect.either),
+      );
+      if (profileResult._tag === "Left") {
+        await post(
+          `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
+        );
+        return;
+      }
+      const profile = profileResult.right;
+      const trackedHandle = await Effect.runPromise(
+        db.addTrackedHandle(
+          context.guildId,
+          platform,
+          profile.handle,
+          normalizeHandle(profile.handle),
+          targetUserId,
+        ),
+      );
+      await Effect.runPromise(
+        db.insertRatingSnapshot({
+          trackedHandleId: trackedHandle.id,
+          rating: profile.rating,
+          rankLabel: profile.rankLabel,
+          maxRating: profile.maxRating,
+          isImprovement: false,
+          rawPayloadJson: profile.rawPayload,
+        }),
+      );
+      await post(
+        `Tracking started. Monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` for @${targetUserId}.`,
+      );
+    });
+
+    // ── /profile subcommands ──────────────────────────────────────────────────
+    const profileHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
+      const raw = asInteractionRaw(event.raw);
+      const sub = raw.data?.options?.[0]?.name;
+      const options = flattenOptions(raw.data?.options);
+      if (sub === "rating") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const result = await Effect.runPromise(
+          profileService.fetchProfile(platform, handle).pipe(Effect.either),
+        );
+        if (result._tag === "Left") {
+          await post(
+            `Could not find \`${handle}\` on ${platformLabel(platform)}.`,
+          );
+          return;
+        }
+        const p = result.right;
+        await post(
+          [
+            `## ${platformLabel(platform)} rating`,
+            `> **[${escHandle(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`,
+          ].join("\n"),
+        );
+        return;
+      }
+      if (sub === "compare") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handleA = options.get("handle_a");
+        const handleB = options.get("handle_b");
+        if (!platform || !handleA || !handleB) {
+          await post("`platform`, `handle_a`, and `handle_b` are required.");
+          return;
+        }
+        const [lr, rr] = await Promise.all([
+          Effect.runPromise(
+            profileService.fetchProfile(platform, handleA).pipe(Effect.either),
+          ),
+          Effect.runPromise(
+            profileService.fetchProfile(platform, handleB).pipe(Effect.either),
+          ),
+        ]);
+        if (lr._tag === "Left") {
+          await post(
+            `Could not find \`${handleA}\` on ${platformLabel(platform)}.`,
+          );
+          return;
+        }
+        if (rr._tag === "Left") {
+          await post(
+            `Could not find \`${handleB}\` on ${platformLabel(platform)}.`,
+          );
+          return;
+        }
+        const fmt = (p: typeof lr.right) =>
+          `> **[${escHandle(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`;
+        await post(
+          [
+            `## ${platformLabel(platform)} comparison`,
+            "",
+            fmt(lr.right),
+            fmt(rr.right),
+          ].join("\n"),
+        );
+        return;
+      }
+      if (sub === "streak") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const tracked = await Effect.runPromise(
+          db.getTrackedHandleByGuild(
+            context.guildId,
+            platform,
+            normalizeHandle(handle),
+          ),
+        );
+        if (!tracked) {
+          await post("That handle is not tracked in this server yet.");
+          return;
+        }
+        const count = await Effect.runPromise(
+          db.countImprovementSnapshots(
+            context.guildId,
+            platform,
+            tracked.handleNormalized,
+          ),
+        );
+        await post(
+          `## Streak\n> \`${tracked.handle}\`  **${count}** improvement${count === 1 ? "" : "s"} recorded`,
+        );
+        return;
+      }
+      if (sub === "info") {
+        const targetUserId = options.get("user");
+        if (!targetUserId) {
+          await post("Provide a user to look up.");
+          return;
+        }
+        const allHandles = await Effect.runPromise(
+          db.listTrackedHandlesByGuild(context.guildId),
+        );
+        const handles = allHandles.filter(
+          (h) => h.createdByUserId === targetUserId,
+        );
+        if (handles.length === 0) {
+          await post("No tracked handles found for that user.");
+          return;
+        }
+        const [displayName, snapshots] = await Promise.all([
+          fetchUsername(targetUserId),
+          Promise.all(
+            handles.map((h) =>
+              Effect.runPromise(
+                db
+                  .getLatestRatingSnapshot(h.id)
+                  .pipe(Effect.orElseSucceed(() => null)),
+              ),
+            ),
+          ),
+        ]);
+        const lines = handles.map((h, i) => {
+          const snap = snapshots[i];
+          const rating =
+            snap?.rating != null ? `\`${snap.rating}\`` : "`Unrated`";
+          const rank = snap?.rankLabel ? `  *${snap.rankLabel}*` : "";
+          return `[${escHandle(h.handle)}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}  ${rating}${rank}`;
+        });
+        await post([`## ${displayName}'s handles`, "", ...lines].join("\n"));
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/profile", profileHandler);
+    onCommand("/profile rating", profileHandler);
+    onCommand("/profile compare", profileHandler);
+    onCommand("/profile streak", profileHandler);
+    onCommand("/profile info", profileHandler);
+
+    // ── /leaderboard ─────────────────────────────────────────────────────────
+    onCommand("/leaderboard", async (event, post) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
+      const leaderboard = await Effect.runPromise(
+        db.getLeaderboard(context.guildId),
+      );
+      if (leaderboard.length === 0) {
+        await post("No rated users tracked in this server yet.");
+        return;
+      }
+      await post(
+        [
+          "## Leaderboard",
+          "",
+          ...leaderboard.map((entry, i) => {
+            const rank = entry.rankLabel ? `  ${entry.rankLabel}` : "";
+            return `**${i + 1}.** [${escHandle(entry.handle)}](<${profileUrl(entry.platform, entry.handle)}>)  ${entry.rating ?? "unrated"}${rank}`;
+          }),
+        ].join("\n"),
+      );
+    });
+
+    // ── /random ──────────────────────────────────────────────────────────────
+    onCommand("/random", async (event, post) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
+      const raw = asInteractionRaw(event.raw);
+      const handles = await Effect.runPromise(
+        db.listTrackedHandlesByGuild(context.guildId),
+      );
+      const cfHandle = handles.find(
+        (h) =>
+          h.platform === "codeforces" &&
+          h.createdByUserId === event.user.userId,
+      );
+      if (!cfHandle) {
+        await post(
+          "You don't have a codeforces handle tracked in this server. Use `/track add` first.",
+        );
+        return;
+      }
+      const profile = await Effect.runPromise(
+        profileService
+          .fetchProfile("codeforces", cfHandle.handle)
+          .pipe(Effect.catchAll(() => Effect.succeed(null))),
+      );
+      const rating = profile?.rating ?? 800;
+      const difficulty =
+        flattenOptions(raw.data?.options).get("difficulty") ?? "medium";
+      const [minRating, maxRating] =
+        difficulty === "easy"
+          ? [rating - 100, rating + 100]
+          : difficulty === "hard"
+            ? [rating + 400, rating + 600]
+            : [rating, rating + 200];
+      const problem = await Effect.runPromise(
+        fetchRandomProblem(minRating, maxRating).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(DbService, db),
+        ),
+      );
+      if (!problem) {
+        await post(
+          `No problems found in the ${minRating}-${maxRating} rating range. Try again later.`,
+        );
+        return;
+      }
+      const tags =
+        problem.tags.length > 0
+          ? `\n> -# tags: ${problem.tags.join(", ")}`
+          : "";
+      await post(
+        [
+          `## [${problem.name}](<${problem.url}>)`,
+          `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\``,
+          tags,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    });
+
+    // ── /simulate (dev only) ─────────────────────────────────────────────────
+    if (config.isDev) {
+      onCommand("/simulate", async (event, post) => {
+        const raw = asInteractionRaw(event.raw);
+        const context = getChannelContext(raw);
+        if (!context) {
+          await post("Use this command inside a server text channel.");
+          return;
+        }
+        const tz = await getChannelTimeZone(context.channelId);
+        const digest = await Effect.runPromise(
+          digestService.getDigest("tomorrow", tz),
+        );
+        await post(digest.message);
+        const [subscription, handles] = await Promise.all([
+          Effect.runPromise(
+            db
+              .getSubscriptionByChannel(context.channelId)
+              .pipe(Effect.orElseSucceed(() => null)),
+          ),
+          Effect.runPromise(db.listTrackedHandlesByGuild(context.guildId)),
+        ]);
+        if (subscription) {
+          for (const h of handles) {
+            const fakeRating = 1200 + Math.floor(Math.random() * 1600);
+            const fakePrev = fakeRating - (25 + Math.floor(Math.random() * 75));
+            const fakeRank =
+              h.platform === "codeforces" ? "Specialist" : "Green";
+            const fakeHandle = {
+              ...subscription,
+              trackedHandleId: h.id,
+              platform: h.platform,
+              handle: h.handle,
+              handleNormalized: h.handleNormalized,
+              handleCreatedByUserId: h.createdByUserId,
+            };
+            const delta = fakeRating - fakePrev;
+            const quote = await generateMotivationalQuote(
+              config.groqApiKey,
+              h.handle,
+              h.platform,
+              delta,
+              fakeRating,
+              fakeRank,
+            ).catch(() => "");
+            await post(
+              buildTrackingAnnouncement(
+                fakeHandle,
+                fakeRating,
+                fakeRank,
+                fakePrev,
+              ) + (quote ? `\n\n*${quote}*` : ""),
+            );
+          }
+        }
+      });
+    }
+
+    // ── !oops (global, no guard) ─────────────────────────────────────────────
+    chat.onNewMessage(/^!oops/i, async (thread, message) => {
+      await Effect.runPromise(
+        Effect.logInfo(`[oops] triggered by ${message.author.userName}`),
+      );
+      try {
+        const excuse = await generateShameExcuse();
+        await thread.post(excuse);
+      } catch (error) {
+        await Effect.runPromise(
+          Effect.logError(
+            `[oops] failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+    });
+
+    const initializedChat = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: async () => {
+          await chat.initialize();
+          return chat;
+        },
+        catch: (cause) =>
+          new DiscordIntegrationError({
+            operation: "initialize",
+            reason: "Failed to initialize Chat SDK",
+            cause,
+          }),
+      }),
+      (instance) =>
+        Effect.tryPromise({
+          try: () => instance.shutdown(),
+          catch: (cause) =>
+            new DiscordIntegrationError({
+              operation: "shutdown",
+              reason: "Failed to shut down Chat SDK cleanly",
+              cause,
+            }),
+        }).pipe(Effect.catchAll(() => Effect.void)),
+    );
+
+    return {
+      handleWebhook: (request) =>
+        Effect.gen(function* () {
+          yield* Effect.logDebug(`[webhook] ${request.method} ${request.url}`);
+          const response = yield* Effect.tryPromise({
+            try: () => initializedChat.webhooks.discord(request),
+            catch: (cause) =>
+              new DiscordIntegrationError({
+                operation: "handleWebhook",
+                reason: "Discord webhook handling failed",
+                cause,
+              }),
+          });
+          yield* Effect.logInfo(
+            `[webhook] processed status=${response.status}`,
+          );
+          return response;
+        }),
+      postChannelMessage: (guildId, channelId, message) =>
+        Effect.tryPromise({
+          try: async () => {
+            const sent = await initializedChat
+              .channel(channelRef(guildId, channelId))
+              .post(message);
+            return { messageId: sent.id || null };
+          },
+          catch: (cause) =>
+            new DiscordIntegrationError({
+              operation: "postChannelMessage",
+              reason: "Failed to post message",
+              cause,
+            }),
+        }),
+      registerCommands: registerSlashCommands(
+        httpClient,
+        config.discordBotToken,
+        config.discordApplicationId,
+        config.isDev,
+      ),
+      startGateway: Effect.gen(function* () {
+        const sessionMs = 23 * 60 * 60 * 1000;
+        while (true) {
+          yield* Effect.logInfo("[gateway] starting session");
+          yield* Effect.tryPromise({
+            try: () =>
+              new Promise<void>((resolve, reject) => {
+                discordAdapter
+                  .startGatewayListener(
+                    {
+                      waitUntil: (p) =>
+                        (p as Promise<void>).then(resolve, reject),
+                    },
+                    sessionMs,
+                  )
+                  .catch(reject);
+              }),
+            catch: (cause) =>
+              new DiscordIntegrationError({
+                operation: "startGateway",
+                reason: "Gateway session failed",
+                cause,
+              }),
+          }).pipe(
+            Effect.catchAll((e) =>
+              Effect.logError(
+                `[gateway] session error: ${e.reason} — ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`,
+              ),
+            ),
+          );
+          yield* Effect.logInfo("[gateway] session ended, reconnecting in 5s");
+          yield* Effect.sleep(5000);
+        }
+      }) as Effect.Effect<never, DiscordIntegrationError>,
+    };
+  }),
+);
