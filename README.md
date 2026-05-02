@@ -58,33 +58,48 @@ bun run start  # Production
 ### Setup *(admin only)*
 | Command | Description |
 |---|---|
-| `/setup time:<HH:MM> timezone:<IANA>` | Enable digests in this channel |
-| `/disable` | Stop scheduled digests |
-| `/time value:<HH:MM>` | Change delivery time |
-| `/timezone value:<IANA>` | Change timezone |
-| `/test-digest` | Preview tomorrow's digest |
+| `/digest setup time:<HH:MM> timezone:<IANA>` | Enable digests in this channel |
+| `/digest disable` | Stop scheduled digests |
+| `/digest time value:<HH:MM>` | Change delivery time |
+| `/digest tz value:<IANA>` | Change timezone |
+| `/digest mention value:<role>` | Set a role to ping with the digest |
+| `/digest mention-clear` | Remove the role mention |
+| `/digest test` | Preview tomorrow's digest |
+| `/digest status` | Digest schedule and service status |
 
-### Info
+### Channel *(admin only)*
 | Command | Description |
 |---|---|
-| `/status` | Digest schedule and service status |
-| `/today` | Contests happening today |
-| `/tomorrow` | Tomorrow's contests |
-| `/upcoming days:<n>` | Contests over the next N days (default 7) |
-| `/next` | The very next upcoming contest |
-| `/lucky` | Random contest pick from tomorrow's pool |
+| `/channel allow` | Allow bot commands in this channel |
+| `/channel disallow` | Remove this channel from the allowlist |
+| `/channel list` | List all allowed command channels |
+
+### Contests
+| Command | Description |
+|---|---|
+| `/contest today` | Contests happening today |
+| `/contest tomorrow` | Tomorrow's contests |
+| `/contest upcoming days:<n>` | Contests over the next N days (default 7) |
+| `/contest next` | The very next upcoming contest |
+| `/contest lucky` | Random contest pick from tomorrow's pool |
 
 ### Tracking
 | Command | Description |
 |---|---|
-| `/track-add platform:<...> handle:<...>` | Start tracking a handle |
-| `/track-remove platform:<...> handle:<...>` | Stop tracking a handle |
-| `/track-list` | List tracked handles in this channel |
-| `/leaderboard` | Top 10 rated users in this channel |
-| `/rating platform:<...> handle:<...>` | Current rating for a handle |
-| `/compare platform:<...> handle_a:<...> handle_b:<...>` | Compare two handles |
-| `/streak platform:<...> handle:<...>` | Recorded rating improvements for a handle |
+| `/track add platform:<...> handle:<...>` | Start tracking a handle |
+| `/track remove platform:<...> handle:<...>` | Stop tracking a handle |
+| `/track list` | List tracked handles in this server |
+| `/track-for user:<@user> platform:<...> handle:<...>` | Add tracking for another user *(admin only)* |
+| `/leaderboard` | Top 10 rated users in this server |
 | `/random` | Random Codeforces problem at your rating |
+
+### Profile
+| Command | Description |
+|---|---|
+| `/profile rating platform:<...> handle:<...>` | Current rating for a handle |
+| `/profile compare platform:<...> handle_a:<...> handle_b:<...>` | Compare two handles |
+| `/profile streak platform:<...> handle:<...>` | Recorded rating improvements for a handle |
+| `/profile info user:<@user>` | Tracked handles and ratings for a Discord user |
 
 ### Fun
 | Command | Description |
