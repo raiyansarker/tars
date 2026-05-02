@@ -283,6 +283,7 @@ export const SchedulerServiceLive = Layer.effect(
       })
 
     const run = Effect.gen(function* () {
+      let lastTrackingRun = 0
       while (true) {
         const now = new Date()
         yield* Effect.logInfo(`Scheduler tick at ${now.toISOString()}`)
@@ -293,11 +294,17 @@ export const SchedulerServiceLive = Layer.effect(
           )
         )
 
-        yield* processTracking(now).pipe(
-          Effect.catchAll((error) =>
-            Effect.logError(`Tracking scheduler tick failed: ${describeError(error)}`)
+        const trackingIntervalMs = config.trackingPollMinutes * 60 * 1000
+        if (Date.now() - lastTrackingRun >= trackingIntervalMs) {
+          yield* processTracking(now).pipe(
+            Effect.catchAll((error) =>
+              Effect.logError(`Tracking scheduler tick failed: ${describeError(error)}`)
+            )
           )
-        )
+          lastTrackingRun = Date.now()
+        } else {
+          yield* Effect.logDebug(`Tracking skipped (next in ${Math.ceil((trackingIntervalMs - (Date.now() - lastTrackingRun)) / 60000)}m)`)
+        }
 
         yield* Effect.sleep(Duration.minutes(config.schedulerPollMinutes))
       }
