@@ -1,3 +1,4 @@
+
 import { AsyncResource } from "node:async_hooks";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createIoRedisState } from "@chat-adapter/state-ioredis";
@@ -59,6 +60,7 @@ interface DiscordInteractionOption {
 }
 
 interface DiscordInteractionRaw {
+  readonly id?: string;
   readonly guild_id?: string;
   readonly channel_id?: string;
   readonly token?: string;
@@ -418,6 +420,7 @@ const flattenOptions = (
 const asInteractionRaw = (raw: unknown): DiscordInteractionRaw =>
   raw as DiscordInteractionRaw;
 
+
 const getChannelContext = (raw: DiscordInteractionRaw) => {
   if (!raw.guild_id || !raw.channel_id) return null;
   return {
@@ -592,13 +595,6 @@ export const DiscordBotServiceLive = Layer.scoped(
       }),
     });
 
-    {
-      const original = (chat as any).handleSlashCommandEvent.bind(chat);
-      (chat as any).handleSlashCommandEvent = (
-        event: unknown,
-        options: unknown,
-      ) => AsyncResource.bind(() => original(event, options))();
-    }
 
     const getChannelTimeZone = async (
       channelId: string | undefined,
@@ -713,7 +709,12 @@ export const DiscordBotServiceLive = Layer.scoped(
         const post = async (msg: string) => {
           await event.channel.post(msg);
         };
-        return (async () => {
+        // Capture the current async context (which includes the SDK's
+        // requestContext AsyncLocalStorage store) so that Effect.runPromise
+        // calls inside the handler don't lose it when Effect's fiber
+        // scheduler resumes continuations in a different async context.
+        const resource = new AsyncResource("tars-cmd");
+        return resource.runInAsyncScope(async () => {
           const start = Date.now();
           try {
             await Effect.runPromise(
@@ -733,7 +734,7 @@ export const DiscordBotServiceLive = Layer.scoped(
               await post("The command failed to complete.");
             } catch {}
           }
-        })();
+        });
       });
     };
 
@@ -1068,6 +1069,21 @@ export const DiscordBotServiceLive = Layer.scoped(
           await post("Both `platform` and `handle` are required.");
           return;
         }
+        const existing = await Effect.runPromise(
+          db
+            .getTrackedHandleByGuild(
+              context.guildId,
+              platform,
+              normalizeHandle(handle),
+            )
+            .pipe(Effect.orElseSucceed(() => null)),
+        );
+        if (existing) {
+          await post(
+            `\`${existing.handle}\` already tracked on ${platformLabel(platform)} in this server.`,
+          );
+          return;
+        }
         const profileResult = await Effect.runPromise(
           profileService.fetchProfile(platform, handle).pipe(Effect.either),
         );
@@ -1197,12 +1213,28 @@ export const DiscordBotServiceLive = Layer.scoped(
     onCommand("/track-for", async (event, post) => {
       const context = await requireAdminChannel(event, post);
       if (!context) return;
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
+      const raw = asInteractionRaw(event.raw);
+      const options = flattenOptions(raw.data?.options);
       const targetUserId = options.get("user");
       const platform = options.get("platform") as TrackingPlatform | undefined;
       const handle = options.get("handle");
       if (!targetUserId || !platform || !handle) {
         await post("`user`, `platform`, and `handle` are required.");
+        return;
+      }
+      const existingFor = await Effect.runPromise(
+        db
+          .getTrackedHandleByGuild(
+            context.guildId,
+            platform,
+            normalizeHandle(handle),
+          )
+          .pipe(Effect.orElseSucceed(() => null)),
+      );
+      if (existingFor) {
+        await post(
+          `\`${existingFor.handle}\` already tracked on ${platformLabel(platform)} in this server.`,
+        );
         return;
       }
       const profileResult = await Effect.runPromise(
