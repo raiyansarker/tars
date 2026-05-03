@@ -1,3 +1,4 @@
+
 import { AsyncResource } from "node:async_hooks";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createIoRedisState } from "@chat-adapter/state-ioredis";
@@ -10,11 +11,10 @@ import { Chat, type SlashCommandEvent } from "chat";
 import { Context, Data, Effect, Layer } from "effect";
 
 import { AppConfig } from "../config";
-import type { Contest } from "../domain/contest";
 import type { TrackingPlatform } from "../domain/bot-state";
 import { ContestDigestService, renderContestLine } from "./contest-digest";
-import { ProfileSourceError, ProfileSourceService } from "./profile-sources";
-import { StateStoreService } from "./state-store";
+import { ProfileSourceService } from "./profile-sources";
+import { DbService } from "./db";
 import { buildTrackingAnnouncement } from "../lib/announcements";
 import { generateMotivationalQuote, generateShameExcuse } from "./no";
 import { fetchRandomProblem } from "../lib/codeforces";
@@ -24,7 +24,7 @@ import {
   parseDeliveryTime,
   computeNextDeliveryAt,
 } from "../lib/time";
-import { formatTrackedProfileSummary, normalizeHandle, escHandle } from "../lib/tracking";
+import { normalizeHandle, escHandle } from "../lib/tracking";
 
 export class DiscordIntegrationError extends Data.TaggedError(
   "DiscordIntegrationError",
@@ -60,6 +60,7 @@ interface DiscordInteractionOption {
 }
 
 interface DiscordInteractionRaw {
+  readonly id?: string;
   readonly guild_id?: string;
   readonly channel_id?: string;
   readonly token?: string;
@@ -68,9 +69,7 @@ interface DiscordInteractionRaw {
     readonly type?: number;
     readonly parent_id?: string;
   };
-  readonly member?: {
-    readonly permissions?: string;
-  };
+  readonly member?: { readonly permissions?: string };
   readonly data?: {
     readonly options?: ReadonlyArray<DiscordInteractionOption>;
   };
@@ -78,300 +77,327 @@ interface DiscordInteractionRaw {
 
 const ADMINISTRATOR = 0x8n;
 const MANAGE_CHANNELS = 0x10n;
+const ADMIN_PERMISSION = "16";
 
-const channelRef = (guildId: string, channelId: string): string =>
+const channelRef = (guildId: string, channelId: string) =>
   `discord:${guildId}:${channelId}`;
-
-const platformLabel = (platform: TrackingPlatform): string =>
-  platform === "codeforces" ? "codeforces" : "atcoder";
-
-const profileUrl = (platform: TrackingPlatform, handle: string): string =>
-  platform === "codeforces"
+const platformLabel = (p: TrackingPlatform) =>
+  p === "codeforces" ? "codeforces" : "atcoder";
+const profileUrl = (p: TrackingPlatform, handle: string) =>
+  p === "codeforces"
     ? `https://codeforces.com/profile/${encodeURIComponent(handle)}`
     : `https://atcoder.jp/users/${encodeURIComponent(handle)}`;
 
-const buildHelpMessage = (
-  defaultTimeZone: string,
-  defaultTime: string,
-): string =>
-  [
-    "## Contest Digest Bot",
-    `> -# Default TZ \`${defaultTimeZone}\`  ·  Time \`${defaultTime}\``,
-    "",
-    "**Setup** *(admin only)*",
-    "`/setup` — Enable digests in this channel with a time and timezone",
-    "`/disable` — Stop scheduled digests",
-    "`/time` — Change the daily delivery time",
-    "`/timezone` — Change the timezone",
-    "`/mention` — Set a role to ping when the digest is posted",
-    "`/mention-clear` — Remove the role mention",
-    "`/test-digest` — Preview what tomorrow's digest looks like",
-    "",
-    "**Info**",
-    "`/status` — Show digest schedule and service status for this channel",
-    "`/today` — Contests happening today",
-    "`/tomorrow` — Tomorrow's contests",
-    "`/upcoming` — Contests over the next N days (default 7)",
-    "`/next` — The very next upcoming contest",
-    "`/lucky` — Random contest pick from tomorrow's pool",
-    "",
-    "**Tracking**",
-    "`/track-add` — Start tracking a Codeforces or AtCoder handle",
-    "`/track-remove` — Stop tracking a handle",
-    "`/track-list` — List all tracked handles in this channel",
-    "`/leaderboard` — Top 10 rated users in this channel",
-    "`/rating` — Current rating for a handle",
-    "`/compare` — Compare two handles on the same platform",
-    "`/streak` — How many rating improvements recorded for a handle",
-    "`/random` — Random Codeforces problem suited to your rating",
-    "",
-    "**Fun**",
-    "`!oops` — Get an excuse",
-  ].join("\n");
-
-const ADMIN_PERMISSION = "16"; // MANAGE_CHANNELS
+const PLATFORM_CHOICES = [
+  { name: "codeforces", value: "codeforces" },
+  { name: "atcoder", value: "atcoder" },
+];
 
 const commandDefinitions = [
   {
-    name: "setup",
-    description: "Enable or update scheduled contest digests for this channel.",
+    name: "digest",
+    description: "Manage scheduled contest digests for this channel.",
     default_member_permissions: ADMIN_PERMISSION,
     options: [
       {
-        type: 3,
+        type: 1,
+        name: "setup",
+        description: "Enable or update scheduled digests.",
+        options: [
+          {
+            type: 3,
+            name: "time",
+            description: "24-hour time like 21:00",
+            required: true,
+          },
+          {
+            type: 3,
+            name: "timezone",
+            description: "IANA timezone like Asia/Dhaka",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "disable",
+        description: "Disable scheduled digests in this channel.",
+      },
+      {
+        type: 1,
         name: "time",
-        description: "24-hour time like 21:00",
-        required: true,
+        description: "Update delivery time.",
+        options: [
+          {
+            type: 3,
+            name: "value",
+            description: "24-hour time like 21:00",
+            required: true,
+          },
+        ],
       },
       {
-        type: 3,
-        name: "timezone",
-        description: "IANA timezone like Asia/Dhaka",
-        required: true,
+        type: 1,
+        name: "tz",
+        description: "Update timezone.",
+        options: [
+          {
+            type: 3,
+            name: "value",
+            description: "IANA timezone like Asia/Dhaka",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "mention",
+        description: "Set a role to ping with the digest.",
+        options: [
+          {
+            type: 8,
+            name: "value",
+            description: "Role to mention",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "mention-clear",
+        description: "Remove the role mention.",
+      },
+      { type: 1, name: "test", description: "Preview tomorrow's digest." },
+      {
+        type: 1,
+        name: "status",
+        description: "Show digest schedule for this channel.",
       },
     ],
   },
   {
-    name: "status",
-    description: "Show the current channel status and digest schedule.",
-  },
-  {
-    name: "disable",
-    description: "Disable scheduled updates in this channel.",
-    default_member_permissions: ADMIN_PERMISSION,
-  },
-  {
-    name: "timezone",
-    description: "Update the channel timezone.",
+    name: "channel",
+    description: "Manage bot command channels for this server.",
     default_member_permissions: ADMIN_PERMISSION,
     options: [
       {
-        type: 3,
-        name: "value",
-        description: "IANA timezone like Asia/Dhaka",
-        required: true,
+        type: 1,
+        name: "allow",
+        description: "Allow bot commands in this channel.",
+      },
+      {
+        type: 1,
+        name: "disallow",
+        description: "Remove this channel from the allowlist.",
+      },
+      {
+        type: 1,
+        name: "list",
+        description: "List all allowed command channels.",
       },
     ],
   },
   {
-    name: "time",
-    description: "Update the channel delivery time.",
-    default_member_permissions: ADMIN_PERMISSION,
+    name: "track",
+    description: "Manage tracked handles for this server.",
     options: [
       {
-        type: 3,
-        name: "value",
-        description: "24-hour time like 21:00",
-        required: true,
+        type: 1,
+        name: "add",
+        description: "Start tracking a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          {
+            type: 3,
+            name: "handle",
+            description: "Handle to track",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "remove",
+        description: "Stop tracking a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          {
+            type: 3,
+            name: "handle",
+            description: "Handle to remove",
+            required: true,
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "list",
+        description: "List tracked handles in this server.",
       },
     ],
   },
-  { name: "today", description: "Show contests happening today." },
-  { name: "tomorrow", description: "Show tomorrow's digest immediately." },
   {
-    name: "upcoming",
-    description: "Show upcoming contests for a range of days.",
-    options: [
-      {
-        type: 4,
-        name: "days",
-        description: "Number of days to look ahead (default 7, max 30)",
-        required: false,
-      },
-    ],
-  },
-  {
-    name: "test-digest",
-    description: "Preview the scheduled digest for this channel.",
+    name: "track-for",
+    description: "Add tracking for another user (admin only).",
     default_member_permissions: ADMIN_PERMISSION,
-  },
-  { name: "next", description: "Show the next upcoming contest." },
-  {
-    name: "track-add",
-    description:
-      "Start tracking a Codeforces or AtCoder handle for this channel.",
     options: [
+      { type: 6, name: "user", description: "Discord user", required: true },
       {
         type: 3,
         name: "platform",
-        description: "Competitive programming platform",
+        description: "Platform",
         required: true,
-        choices: [
-          { name: "Codeforces", value: "codeforces" },
-          { name: "AtCoder", value: "atcoder" },
-        ],
+        choices: PLATFORM_CHOICES,
       },
       {
         type: 3,
         name: "handle",
-        description: "The user handle to track",
+        description: "Handle to track",
         required: true,
       },
     ],
   },
   {
-    name: "track-remove",
-    description: "Stop tracking a handle in this channel.",
+    name: "contest",
+    description: "Browse upcoming contests.",
+    options: [
+      { type: 1, name: "today", description: "Contests happening today." },
+      { type: 1, name: "tomorrow", description: "Tomorrow's contests." },
+      {
+        type: 1,
+        name: "upcoming",
+        description: "Contests over the next N days.",
+        options: [
+          {
+            type: 4,
+            name: "days",
+            description: "Days to look ahead (default 7, max 30)",
+            required: false,
+          },
+        ],
+      },
+      { type: 1, name: "next", description: "The very next upcoming contest." },
+      {
+        type: 1,
+        name: "lucky",
+        description: "Random contest from tomorrow's pool.",
+      },
+    ],
+  },
+  {
+    name: "profile",
+    description: "Look up competitive programming profiles.",
     options: [
       {
-        type: 3,
-        name: "platform",
-        description: "Competitive programming platform",
-        required: true,
-        choices: [
-          { name: "Codeforces", value: "codeforces" },
-          { name: "AtCoder", value: "atcoder" },
+        type: 1,
+        name: "rating",
+        description: "Current rating for a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          { type: 3, name: "handle", description: "Handle", required: true },
         ],
       },
       {
-        type: 3,
-        name: "handle",
-        description: "The user handle to remove",
-        required: true,
-      },
-    ],
-  },
-  { name: "track-list", description: "List tracked handles for this channel." },
-  {
-    name: "rating",
-    description: "Show the current rating snapshot for a user.",
-    options: [
-      {
-        type: 3,
-        name: "platform",
-        description: "Competitive programming platform",
-        required: true,
-        choices: [
-          { name: "Codeforces", value: "codeforces" },
-          { name: "AtCoder", value: "atcoder" },
+        type: 1,
+        name: "compare",
+        description: "Compare two handles.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          {
+            type: 3,
+            name: "handle_a",
+            description: "First handle",
+            required: true,
+          },
+          {
+            type: 3,
+            name: "handle_b",
+            description: "Second handle",
+            required: true,
+          },
         ],
       },
       {
-        type: 3,
-        name: "handle",
-        description: "The user handle to inspect",
-        required: true,
-      },
-    ],
-  },
-  {
-    name: "compare",
-    description: "Compare two users on the same platform.",
-    options: [
-      {
-        type: 3,
-        name: "platform",
-        description: "Competitive programming platform",
-        required: true,
-        choices: [
-          { name: "Codeforces", value: "codeforces" },
-          { name: "AtCoder", value: "atcoder" },
+        type: 1,
+        name: "streak",
+        description: "Rating improvements recorded for a handle.",
+        options: [
+          {
+            type: 3,
+            name: "platform",
+            description: "Platform",
+            required: true,
+            choices: PLATFORM_CHOICES,
+          },
+          { type: 3, name: "handle", description: "Handle", required: true },
         ],
       },
       {
-        type: 3,
-        name: "handle_a",
-        description: "First handle",
-        required: true,
-      },
-      {
-        type: 3,
-        name: "handle_b",
-        description: "Second handle",
-        required: true,
-      },
-    ],
-  },
-  {
-    name: "streak",
-    description:
-      "Show how many improvements the bot has recorded for a tracked user.",
-    options: [
-      {
-        type: 3,
-        name: "platform",
-        description: "Competitive programming platform",
-        required: true,
-        choices: [
-          { name: "Codeforces", value: "codeforces" },
-          { name: "AtCoder", value: "atcoder" },
+        type: 1,
+        name: "info",
+        description: "Tracked handles and ratings for a Discord user.",
+        options: [
+          {
+            type: 6,
+            name: "user",
+            description: "Discord user to look up",
+            required: true,
+          },
         ],
       },
-      {
-        type: 3,
-        name: "handle",
-        description: "Tracked handle",
-        required: true,
-      },
     ],
   },
-  {
-    name: "leaderboard",
-    description: "Show the top 10 rated users in this channel.",
-  },
-  { name: "lucky", description: "Pick a fun contest from tomorrow's pool." },
+  { name: "leaderboard", description: "Top 10 rated users in this server." },
   {
     name: "random",
-    description: "Get a random Codeforces problem suited to your rating.",
+    description: "Random Codeforces problem suited to your rating.",
     options: [
       {
         type: 3,
         name: "difficulty",
-        description: "Problem difficulty relative to your rating",
+        description: "Difficulty relative to your rating",
         required: false,
         choices: [
-          { name: "Easy (±100)", value: "easy" },
-          { name: "Medium (+200–400)", value: "medium" },
-          { name: "Hard (+400–600)", value: "hard" },
+          { name: "easy (+-100)", value: "easy" },
+          { name: "medium (+200-400)", value: "medium" },
+          { name: "hard (+400-600)", value: "hard" },
         ],
       },
     ],
   },
-  { name: "help", description: "Show command help and setup guidance." },
-  {
-    name: "mention",
-    description: "Set a role to mention when the daily digest is posted.",
-    options: [
-      { type: 8, name: "value", description: "Role to mention", required: true }
-    ]
-  },
-  { name: "mention-clear", description: "Remove the role mention from the daily digest." },
-  {
-    name: "info",
-    description: "Show tracked handles and ratings for a user.",
-    options: [
-      { type: 6, name: "user", description: "The Discord user to look up", required: true },
-    ],
-  },
-]
+  { name: "help", description: "Show command help." },
+];
 
 const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
-  const permissionValue = raw.member?.permissions;
-  if (!permissionValue) return false;
-  const permissions = BigInt(permissionValue);
+  if (!raw.member?.permissions) return false;
+  const p = BigInt(raw.member.permissions);
   return (
-    (permissions & ADMINISTRATOR) === ADMINISTRATOR ||
-    (permissions & MANAGE_CHANNELS) === MANAGE_CHANNELS
+    (p & ADMINISTRATOR) === ADMINISTRATOR ||
+    (p & MANAGE_CHANNELS) === MANAGE_CHANNELS
   );
 };
 
@@ -379,9 +405,7 @@ const flattenOptions = (
   options: ReadonlyArray<DiscordInteractionOption> | undefined,
 ): Map<string, string> => {
   const values = new Map<string, string>();
-  const walk = (
-    items: ReadonlyArray<DiscordInteractionOption> | undefined,
-  ): void => {
+  const walk = (items: ReadonlyArray<DiscordInteractionOption> | undefined) => {
     if (!items) return;
     for (const item of items) {
       if (item.name && item.value !== undefined)
@@ -396,14 +420,8 @@ const flattenOptions = (
 const asInteractionRaw = (raw: unknown): DiscordInteractionRaw =>
   raw as DiscordInteractionRaw;
 
-const getChannelContext = (
-  raw: DiscordInteractionRaw,
-): {
-  readonly guildId: string;
-  readonly channelId: string;
-  readonly guildName: string | null;
-  readonly channelName: string | null;
-} | null => {
+
+const getChannelContext = (raw: DiscordInteractionRaw) => {
   if (!raw.guild_id || !raw.channel_id) return null;
   return {
     guildId: raw.guild_id,
@@ -414,10 +432,54 @@ const getChannelContext = (
 };
 
 const isUnsupportedChannelType = (raw: DiscordInteractionRaw): boolean => {
-  const type = raw.channel?.type;
-  if (type === undefined) return false;
-  return type === 11 || type === 12 || type === 15;
+  const t = raw.channel?.type;
+  return t === 11 || t === 12 || t === 15;
 };
+
+const buildHelpMessage = (defaultTimeZone: string, defaultTime: string) =>
+  [
+    "## Contest Digest Bot",
+    `> -# Default TZ \`${defaultTimeZone}\`  ·  Time \`${defaultTime}\``,
+    "",
+    "**Setup** *(admin only)*",
+    "`/digest setup` — Enable digests with a time and timezone",
+    "`/digest disable` — Stop scheduled digests",
+    "`/digest time` — Change delivery time",
+    "`/digest tz` — Change timezone",
+    "`/digest mention` — Set a role to ping",
+    "`/digest mention-clear` — Remove role mention",
+    "`/digest test` — Preview tomorrow's digest",
+    "`/digest status` — Show digest schedule",
+    "",
+    "**Channel** *(admin only)*",
+    "`/channel allow` — Allow bot commands in this channel",
+    "`/channel disallow` — Remove this channel from allowlist",
+    "`/channel list` — List allowed command channels",
+    "",
+    "**Contests**",
+    "`/contest today` — Contests today",
+    "`/contest tomorrow` — Tomorrow's contests",
+    "`/contest upcoming` — Contests over next N days",
+    "`/contest next` — Next upcoming contest",
+    "`/contest lucky` — Random contest from tomorrow",
+    "",
+    "**Tracking**",
+    "`/track add` — Track a handle",
+    "`/track remove` — Stop tracking a handle",
+    "`/track list` — List tracked handles",
+    "`/track-for` — Add tracking for another user (admin only)",
+    "`/leaderboard` — Top 10 rated users",
+    "`/random` — Random Codeforces problem",
+    "",
+    "**Profile**",
+    "`/profile rating` — Current rating",
+    "`/profile compare` — Compare two handles",
+    "`/profile streak` — Rating improvements recorded",
+    "`/profile info` — Handles for a Discord user",
+    "",
+    "**Fun**",
+    "`!oops` — Get an excuse",
+  ].join("\n");
 
 const registerSlashCommands = (
   httpClient: HttpClient.HttpClient,
@@ -428,10 +490,7 @@ const registerSlashCommands = (
   const commands = isDev
     ? [
         ...commandDefinitions,
-        {
-          name: "simulate",
-          description: "[DEV] Simulate bot events in this channel.",
-        },
+        { name: "simulate", description: "[DEV] Simulate bot events." },
       ]
     : commandDefinitions;
   return HttpClientRequest.put(
@@ -439,7 +498,7 @@ const registerSlashCommands = (
   ).pipe(
     HttpClientRequest.setHeader("Authorization", `Bot ${token}`),
     HttpClientRequest.setHeader("Accept", "application/json"),
-    (request) => HttpClientRequest.bodyJson(request, commands),
+    (req) => HttpClientRequest.bodyJson(req, commands),
     Effect.mapError(
       (cause) =>
         new DiscordIntegrationError({
@@ -448,7 +507,7 @@ const registerSlashCommands = (
           cause,
         }),
     ),
-    Effect.flatMap((request) => httpClient.execute(request)),
+    Effect.flatMap((req) => httpClient.execute(req)),
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.asVoid,
     Effect.mapError((cause) =>
@@ -468,7 +527,7 @@ export const DiscordBotServiceLive = Layer.scoped(
   Effect.gen(function* () {
     const config = yield* AppConfig;
     const httpClient = yield* HttpClient.HttpClient;
-    const store = yield* StateStoreService;
+    const db = yield* DbService;
     const digestService = yield* ContestDigestService;
     const profileService = yield* ProfileSourceService;
 
@@ -501,9 +560,9 @@ export const DiscordBotServiceLive = Layer.scoped(
     ): Promise<string> => {
       const grouped = new Map<string, (typeof handles)[number][]>();
       for (const h of handles) {
-        const group = grouped.get(h.createdByUserId) ?? [];
-        group.push(h);
-        grouped.set(h.createdByUserId, group);
+        const g = grouped.get(h.createdByUserId) ?? [];
+        g.push(h);
+        grouped.set(h.createdByUserId, g);
       }
       const sections = await Promise.all(
         [...grouped.entries()].map(async ([userId, hs]) => {
@@ -536,38 +595,35 @@ export const DiscordBotServiceLive = Layer.scoped(
       }),
     });
 
-    // Patch: bind ALS context before async hop.
-    // processSlashCommand is called synchronously inside requestContext.run, but
-    // handleSlashCommandEvent is async — ALS context is gone by the time it runs.
-    // AsyncResource.bind here captures the context while still inside requestContext.run.
-    {
-      const original = (chat as any).handleSlashCommandEvent.bind(chat);
-      (chat as any).handleSlashCommandEvent = function (
-        event: unknown,
-        options: unknown,
-      ) {
-        return AsyncResource.bind(() => original(event, options))();
-      };
-    }
 
     const getChannelTimeZone = async (
       channelId: string | undefined,
     ): Promise<string> => {
       if (!channelId) return config.defaultTimeZone;
-      const subscription = await Effect.runPromise(
-        store.getSubscriptionByChannel(channelId),
+      const sub = await Effect.runPromise(
+        db.getSubscriptionByChannel(channelId).pipe(
+          Effect.catchAll((e) => {
+            Effect.runPromise(
+              Effect.logError(
+                `[bot] getChannelTimeZone failed channel=${channelId}: ${e.operation}`,
+              ),
+            );
+            return Effect.succeed(null);
+          }),
+        ),
       );
-      return subscription?.timezone ?? config.defaultTimeZone;
+      return sub?.timezone ?? config.defaultTimeZone;
     };
 
+    // Guard: admin commands — requires guild context + admin perms
     const requireAdminChannel = async (
       event: SlashCommandEvent,
       post: (msg: string) => Promise<void>,
     ): Promise<{
-      readonly guildId: string;
-      readonly channelId: string;
-      readonly guildName: string | null;
-      readonly channelName: string | null;
+      guildId: string;
+      channelId: string;
+      guildName: string | null;
+      channelName: string | null;
     } | null> => {
       const raw = asInteractionRaw(event.raw);
       const context = getChannelContext(raw);
@@ -590,6 +646,58 @@ export const DiscordBotServiceLive = Layer.scoped(
       return context;
     };
 
+    // Guard: non-admin commands — requires guild context + allowed channel
+    const requireCommandChannel = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ): Promise<{
+      guildId: string;
+      channelId: string;
+      guildName: string | null;
+      channelName: string | null;
+    } | null> => {
+      const raw = asInteractionRaw(event.raw);
+      const context = getChannelContext(raw);
+      if (!context) {
+        await post("Use this command inside a Discord server text channel.");
+        return null;
+      }
+      if (isUnsupportedChannelType(raw)) {
+        await post(
+          "Run this command in a regular text or announcement channel.",
+        );
+        return null;
+      }
+      const allowedResult = await Effect.runPromise(
+        db.listCommandChannels(context.guildId).pipe(Effect.either),
+      );
+      if (allowedResult._tag === "Left") {
+        await Effect.runPromise(
+          Effect.logError(
+            `[bot] requireCommandChannel db error guild=${context.guildId}: ${allowedResult.left.operation}`,
+          ),
+        );
+        await post(
+          "Could not check command channel permissions. Try again later.",
+        );
+        return null;
+      }
+      const allowed = allowedResult.right;
+      if (allowed.length === 0) {
+        await post(
+          "No command channels configured. An admin must run `/channel allow` first.",
+        );
+        return null;
+      }
+      if (!allowed.includes(context.channelId)) {
+        await post(
+          `Commands are only allowed in: ${allowed.map((id) => `<#${id}>`).join(", ")}`,
+        );
+        return null;
+      }
+      return context;
+    };
+
     const onCommand = (
       name: string,
       handler: (
@@ -601,7 +709,12 @@ export const DiscordBotServiceLive = Layer.scoped(
         const post = async (msg: string) => {
           await event.channel.post(msg);
         };
-        return (async () => {
+        // Capture the current async context (which includes the SDK's
+        // requestContext AsyncLocalStorage store) so that Effect.runPromise
+        // calls inside the handler don't lose it when Effect's fiber
+        // scheduler resumes continuations in a different async context.
+        const resource = new AsyncResource("tars-cmd");
+        return resource.runInAsyncScope(async () => {
           const start = Date.now();
           try {
             await Effect.runPromise(
@@ -618,245 +731,733 @@ export const DiscordBotServiceLive = Layer.scoped(
               ),
             );
             try {
-              await post("Error: The command failed to complete.");
+              await post("The command failed to complete.");
             } catch {}
           }
-        })();
+        });
       });
     };
 
-    onCommand("/help", async (event, post) => {
+    // ── /help ────────────────────────────────────────────────────────────────
+    onCommand("/help", async (_, post) => {
       await post(helpMessage);
     });
 
-    onCommand("/setup", async (event, post) => {
-      const context = await requireAdminChannel(event, post);
-      if (!context) return;
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
-      const time = options.get("time");
-      const timezone = options.get("timezone");
-      if (!time || !timezone) {
-        await post("Both `time` and `timezone` are required.");
-        return;
-      }
-      const parsedTime = parseDeliveryTime(time);
-      if (!parsedTime) {
-        await post("Use a 24-hour time like `21:00`.");
-        return;
-      }
-      if (!isValidTimeZone(timezone)) {
-        await post("That timezone is not a valid IANA timezone.");
-        return;
-      }
-      const subscription = await Effect.runPromise(
-        store.upsertSubscription({
-          ...context,
-          timezone,
-          deliveryHour: parsedTime.hour,
-          deliveryMinute: parsedTime.minute,
-          createdByUserId: event.user.userId,
-        }),
-      );
-      await post(
-        `**Setup Complete:** Scheduled updates enabled for <#${subscription.channelId}> at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\` (${subscription.timezone}).`,
-      );
-    });
-
-    onCommand("/status", async (event, post) => {
+    // ── /digest ───────────────────────────────────────────────────────────────
+    // SDK only appends subcommand to path when it has nested options.
+    // Register both parent ("/digest") and full path ("/digest setup" etc.) to
+    // cover both cases.
+    const digestHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
       const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const subscription = await Effect.runPromise(
-        store.getSubscriptionByChannel(context.channelId),
-      );
-      if (!subscription) {
+      const sub = raw.data?.options?.[0]?.name;
+      const options = flattenOptions(raw.data?.options);
+
+      if (sub === "setup") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const time = options.get("time");
+        const timezone = options.get("timezone");
+        if (!time || !timezone) {
+          await post("Both `time` and `timezone` are required.");
+          return;
+        }
+        const parsedTime = parseDeliveryTime(time);
+        if (!parsedTime) {
+          await post("Use a 24-hour time like `21:00`.");
+          return;
+        }
+        if (!isValidTimeZone(timezone)) {
+          await post("That timezone is not a valid IANA timezone.");
+          return;
+        }
+        const subscription = await Effect.runPromise(
+          db.upsertSubscription({
+            ...context,
+            timezone,
+            deliveryHour: parsedTime.hour,
+            deliveryMinute: parsedTime.minute,
+            createdByUserId: event.user.userId,
+          }),
+        );
         await post(
-          "This channel is not configured yet. Run `/setup time:<HH:MM> timezone:<IANA zone>`.",
+          `Setup complete. Scheduled digests enabled for <#${subscription.channelId}> at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\` (${subscription.timezone}).`,
         );
         return;
       }
-      const nextRun = computeNextDeliveryAt(
-        new Date(),
-        subscription.timezone,
-        subscription.deliveryHour,
-        subscription.deliveryMinute,
-      );
-      await post(
-        [
-          `## Status — <#${subscription.channelId}>`,
-          `> Digest \`${subscription.enabled ? "on" : "off"}\`  ·  Timezone \`${subscription.timezone}\`  ·  Daily at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\`  ·  Next <t:${Math.floor(nextRun.getTime() / 1000)}:R>`,
-        ].join("\n"),
-      );
-    });
-
-    onCommand("/disable", async (event, post) => {
-      const context = await requireAdminChannel(event, post);
-      if (!context) return;
-      const disabled = await Effect.runPromise(
-        store.disableSubscription(context.channelId),
-      );
-      await post(
-        disabled
-          ? "**Disabled:** Scheduled updates are now disabled for this channel."
-          : "This channel was not configured yet.",
-      );
-    });
-
-    onCommand("/timezone", async (event, post) => {
-      const context = await requireAdminChannel(event, post);
-      if (!context) return;
-      const timezone = flattenOptions(
-        asInteractionRaw(event.raw).data?.options,
-      ).get("value");
-      if (!timezone || !isValidTimeZone(timezone)) {
-        await post("Provide a valid IANA timezone (e.g., `Asia/Dhaka`).");
+      if (sub === "disable") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const disabled = await Effect.runPromise(
+          db.disableSubscription(context.channelId),
+        );
+        await post(
+          disabled
+            ? "Scheduled digests disabled for this channel."
+            : "This channel was not configured yet.",
+        );
         return;
       }
-      const updated = await Effect.runPromise(
-        store.updateSubscriptionTimeZone(context.channelId, timezone),
-      );
-      await post(
-        updated
-          ? `**Updated:** Timezone changed to \`${updated.timezone}\`.`
-          : "Run `/setup` first before updating settings.",
-      );
-    });
-
-    onCommand("/time", async (event, post) => {
-      const context = await requireAdminChannel(event, post);
-      if (!context) return;
-      const timeValue = flattenOptions(
-        asInteractionRaw(event.raw).data?.options,
-      ).get("value");
-      const parsedTime = timeValue ? parseDeliveryTime(timeValue) : null;
-      if (!parsedTime) {
-        await post("Provide a valid 24-hour time like `21:00`.");
+      if (sub === "time") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const parsedTime = options.get("value")
+          ? parseDeliveryTime(options.get("value")!)
+          : null;
+        if (!parsedTime) {
+          await post("Provide a valid 24-hour time like `21:00`.");
+          return;
+        }
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionDeliveryTime(
+            context.channelId,
+            parsedTime.hour,
+            parsedTime.minute,
+          ),
+        );
+        await post(
+          updated
+            ? `Delivery time changed to \`${formatDeliveryTime(updated.deliveryHour, updated.deliveryMinute)}\`.`
+            : "Run `/digest setup` first.",
+        );
         return;
       }
-      const updated = await Effect.runPromise(
-        store.updateSubscriptionDeliveryTime(
-          context.channelId,
-          parsedTime.hour,
-          parsedTime.minute,
-        ),
-      );
-      await post(
-        updated
-          ? `**Updated:** Delivery time changed to \`${formatDeliveryTime(updated.deliveryHour, updated.deliveryMinute)}\`.`
-          : "Run `/setup` first before updating settings.",
-      );
-    });
+      if (sub === "tz") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const timezone = options.get("value");
+        if (!timezone || !isValidTimeZone(timezone)) {
+          await post("Provide a valid IANA timezone (e.g., `Asia/Dhaka`).");
+          return;
+        }
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionTimeZone(context.channelId, timezone),
+        );
+        await post(
+          updated
+            ? `Timezone changed to \`${updated.timezone}\`.`
+            : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "mention") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const roleId = options.get("value");
+        if (!roleId) {
+          await post("Provide a role.");
+          return;
+        }
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionMentionRole(context.channelId, roleId),
+        );
+        await post(
+          updated
+            ? `Role set. Digest will mention <@&${roleId}>.`
+            : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "mention-clear") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const updated = await Effect.runPromise(
+          db.updateSubscriptionMentionRole(context.channelId, null),
+        );
+        await post(
+          updated ? "Role mention cleared." : "Run `/digest setup` first.",
+        );
+        return;
+      }
+      if (sub === "test") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const subscription = await Effect.runPromise(
+          db
+            .getSubscriptionByChannel(context.channelId)
+            .pipe(Effect.orElseSucceed(() => null)),
+        );
+        const timeZone = subscription?.timezone ?? config.defaultTimeZone;
+        await post(
+          (
+            await Effect.runPromise(
+              digestService.getDigest("tomorrow", timeZone),
+            )
+          ).message,
+        );
+        return;
+      }
+      if (sub === "status") {
+        const context = await requireAdminChannel(event, post);
+        if (!context) return;
+        const subscription = await Effect.runPromise(
+          db
+            .getSubscriptionByChannel(context.channelId)
+            .pipe(Effect.orElseSucceed(() => null)),
+        );
+        if (!subscription) {
+          await post(
+            "This channel is not configured yet. Run `/digest setup time:<HH:MM> timezone:<IANA>`.",
+          );
+          return;
+        }
+        const nextRun = computeNextDeliveryAt(
+          new Date(),
+          subscription.timezone,
+          subscription.deliveryHour,
+          subscription.deliveryMinute,
+        );
+        await post(
+          [
+            `## Status — <#${subscription.channelId}>`,
+            `> Digest \`${subscription.enabled ? "on" : "off"}\`  ·  Timezone \`${subscription.timezone}\`  ·  Daily at \`${formatDeliveryTime(subscription.deliveryHour, subscription.deliveryMinute)}\`  ·  Next <t:${Math.floor(nextRun.getTime() / 1000)}:R>`,
+          ].join("\n"),
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/digest", digestHandler);
+    onCommand("/digest setup", digestHandler);
+    onCommand("/digest time", digestHandler);
+    onCommand("/digest tz", digestHandler);
+    onCommand("/digest mention", digestHandler);
 
-    onCommand("/mention", async (event, post) => {
-      const context = await requireAdminChannel(event, post)
-      if (!context) return
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options)
-      const roleId = options.get("value")
-      if (!roleId) { await post("Provide a role."); return }
-      const updated = await Effect.runPromise(store.updateSubscriptionMentionRole(context.channelId, roleId))
-      await post(updated ? `Role set. Digest will mention <@&${roleId}>.` : "Run `/setup` first.")
-    })
+    // ── /channel ──────────────────────────────────────────────────────────────
+    const channelHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireAdminChannel(event, post);
+      if (!context) return;
+      const sub = asInteractionRaw(event.raw).data?.options?.[0]?.name;
+      if (sub === "allow") {
+        await Effect.runPromise(
+          db.addCommandChannel(context.guildId, context.channelId),
+        );
+        await post(
+          `<#${context.channelId}> added to the bot command allowlist.`,
+        );
+        return;
+      }
+      if (sub === "disallow") {
+        const removed = await Effect.runPromise(
+          db.removeCommandChannel(context.guildId, context.channelId),
+        );
+        await post(
+          removed
+            ? `Removed <#${context.channelId}> from the allowlist.`
+            : "This channel was not in the allowlist.",
+        );
+        return;
+      }
+      if (sub === "list") {
+        const allowed = await Effect.runPromise(
+          db
+            .listCommandChannels(context.guildId)
+            .pipe(Effect.orElseSucceed(() => [] as string[])),
+        );
+        await post(
+          allowed.length === 0
+            ? "No command channels configured yet."
+            : `Allowed channels: ${allowed.map((id) => `<#${id}>`).join(", ")}`,
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/channel", channelHandler);
 
-    onCommand("/mention-clear", async (event, post) => {
-      const context = await requireAdminChannel(event, post)
-      if (!context) return
-      const updated = await Effect.runPromise(store.updateSubscriptionMentionRole(context.channelId, null))
-      await post(updated ? "Role mention cleared." : "Run `/setup` first.")
-    })
-
-    onCommand("/today", async (event, post) => {
+    // ── /contest subcommands ──────────────────────────────────────────────────
+    const contestHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
       const raw = asInteractionRaw(event.raw);
+      const sub = raw.data?.options?.[0]?.name;
       const timeZone = await getChannelTimeZone(raw.channel_id);
-      const digest = await Effect.runPromise(
-        digestService.getDigest("today", timeZone),
-      );
-      await post(digest.message);
-    });
+      if (sub === "today") {
+        await post(
+          (await Effect.runPromise(digestService.getDigest("today", timeZone)))
+            .message,
+        );
+        return;
+      }
+      if (sub === "tomorrow") {
+        await post(
+          (
+            await Effect.runPromise(
+              digestService.getDigest("tomorrow", timeZone),
+            )
+          ).message,
+        );
+        return;
+      }
+      if (sub === "upcoming") {
+        const days = Math.min(
+          Math.max(
+            Number(flattenOptions(raw.data?.options).get("days") || "7"),
+            1,
+          ),
+          30,
+        );
+        await post(
+          (
+            await Effect.runPromise(
+              digestService.getUpcomingRange(days, timeZone),
+            )
+          ).message,
+        );
+        return;
+      }
+      if (sub === "next") {
+        const contest = await Effect.runPromise(
+          digestService.getNextUpcomingContest(timeZone),
+        );
+        if (!contest) {
+          await post("No upcoming contests found right now.");
+          return;
+        }
+        await post(
+          ["## Next Up", "", renderContestLine(contest, timeZone)].join("\n"),
+        );
+        return;
+      }
+      if (sub === "lucky") {
+        const contest = await Effect.runPromise(
+          digestService.pickLuckyContest(timeZone),
+        );
+        if (!contest) {
+          await post("No contest available for a lucky pick.");
+          return;
+        }
+        await post(
+          [
+            "## Lucky Pick",
+            "> -# bias: contests under 2h",
+            "",
+            renderContestLine(contest, timeZone),
+          ].join("\n"),
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/contest", contestHandler);
+    onCommand("/contest upcoming", contestHandler);
 
-    onCommand("/tomorrow", async (event, post) => {
+    // ── /track subcommands ────────────────────────────────────────────────────
+    const trackHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
       const raw = asInteractionRaw(event.raw);
-      const timeZone = await getChannelTimeZone(raw.channel_id);
-      const digest = await Effect.runPromise(
-        digestService.getDigest("tomorrow", timeZone),
-      );
-      await post(digest.message);
-    });
+      const sub = raw.data?.options?.[0]?.name;
+      const options = flattenOptions(raw.data?.options);
+      if (sub === "add") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const existing = await Effect.runPromise(
+          db
+            .getTrackedHandleByGuild(
+              context.guildId,
+              platform,
+              normalizeHandle(handle),
+            )
+            .pipe(Effect.orElseSucceed(() => null)),
+        );
+        if (existing) {
+          await post(
+            `\`${existing.handle}\` already tracked on ${platformLabel(platform)} in this server.`,
+          );
+          return;
+        }
+        const profileResult = await Effect.runPromise(
+          profileService.fetchProfile(platform, handle).pipe(Effect.either),
+        );
+        if (profileResult._tag === "Left") {
+          await post(
+            `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
+          );
+          return;
+        }
+        const profile = profileResult.right;
+        const trackedHandle = await Effect.runPromise(
+          db.addTrackedHandle(
+            context.guildId,
+            platform,
+            profile.handle,
+            normalizeHandle(profile.handle),
+            event.user.userId,
+          ),
+        );
+        await Effect.runPromise(
+          db.insertRatingSnapshot({
+            trackedHandleId: trackedHandle.id,
+            rating: profile.rating,
+            rankLabel: profile.rankLabel,
+            maxRating: profile.maxRating,
+            isImprovement: false,
+            rawPayloadJson: profile.rawPayload,
+          }),
+        );
+        await post(
+          `Tracking started. Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this server.`,
+        );
+        return;
+      }
+      if (sub === "add-for") {
+        if (!hasAdminPermissions(asInteractionRaw(event.raw))) {
+          await post(
+            "You need `Manage Channels` or `Administrator` permission for this command.",
+          );
+          return;
+        }
+        const targetUserId = options.get("user");
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!targetUserId || !platform || !handle) {
+          await post("`user`, `platform`, and `handle` are required.");
+          return;
+        }
+        const profileResult = await Effect.runPromise(
+          profileService.fetchProfile(platform, handle).pipe(Effect.either),
+        );
+        if (profileResult._tag === "Left") {
+          await post(
+            `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
+          );
+          return;
+        }
+        const profile = profileResult.right;
+        const trackedHandle = await Effect.runPromise(
+          db.addTrackedHandle(
+            context.guildId,
+            platform,
+            profile.handle,
+            normalizeHandle(profile.handle),
+            targetUserId,
+          ),
+        );
+        await Effect.runPromise(
+          db.insertRatingSnapshot({
+            trackedHandleId: trackedHandle.id,
+            rating: profile.rating,
+            rankLabel: profile.rankLabel,
+            maxRating: profile.maxRating,
+            isImprovement: false,
+            rawPayloadJson: profile.rawPayload,
+          }),
+        );
+        await post(
+          `Tracking started. Monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` for <@${targetUserId}>.`,
+        );
+        return;
+      }
+      if (sub === "remove") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const removed = await Effect.runPromise(
+          db.removeTrackedHandle(
+            context.guildId,
+            platform,
+            normalizeHandle(handle),
+          ),
+        );
+        await post(
+          removed
+            ? `Stopped tracking ${platformLabel(platform)} handle \`${handle}\`.`
+            : "That handle is not currently tracked in this server.",
+        );
+        return;
+      }
+      if (sub === "list") {
+        const handles = await Effect.runPromise(
+          db.listTrackedHandlesByGuild(context.guildId),
+        );
+        await post(
+          [
+            "## Tracked Handles",
+            "",
+            handles.length === 0 ? "none" : await renderTrackedByUser(handles),
+          ].join("\n"),
+        );
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/track", trackHandler);
+    onCommand("/track add", trackHandler);
+    onCommand("/track remove", trackHandler);
 
-    onCommand("/upcoming", async (event, post) => {
+    onCommand("/track-for", async (event, post) => {
+      const context = await requireAdminChannel(event, post);
+      if (!context) return;
       const raw = asInteractionRaw(event.raw);
       const options = flattenOptions(raw.data?.options);
-      const days = Math.min(
-        Math.max(Number(options.get("days") || "7"), 1),
-        30,
-      );
-      const timeZone = await getChannelTimeZone(raw.channel_id);
-      const digest = await Effect.runPromise(
-        digestService.getUpcomingRange(days, timeZone),
-      );
-      await post(digest.message);
-    });
-
-    onCommand("/test-digest", async (event, post) => {
-      const context = await requireAdminChannel(event, post);
-      if (!context) return;
-      const subscription = await Effect.runPromise(
-        store.getSubscriptionByChannel(context.channelId),
-      );
-      const timeZone = subscription?.timezone ?? config.defaultTimeZone;
-      const digest = await Effect.runPromise(
-        digestService.getDigest("tomorrow", timeZone),
-      );
-      await post(digest.message);
-    });
-
-    onCommand("/next", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const timeZone = await getChannelTimeZone(raw.channel_id);
-      const contest = await Effect.runPromise(
-        digestService.getNextUpcomingContest(timeZone),
-      );
-      if (!contest) {
-        await post("No upcoming contests found right now.");
+      const targetUserId = options.get("user");
+      const platform = options.get("platform") as TrackingPlatform | undefined;
+      const handle = options.get("handle");
+      if (!targetUserId || !platform || !handle) {
+        await post("`user`, `platform`, and `handle` are required.");
         return;
       }
+      const existingFor = await Effect.runPromise(
+        db
+          .getTrackedHandleByGuild(
+            context.guildId,
+            platform,
+            normalizeHandle(handle),
+          )
+          .pipe(Effect.orElseSucceed(() => null)),
+      );
+      if (existingFor) {
+        await post(
+          `\`${existingFor.handle}\` already tracked on ${platformLabel(platform)} in this server.`,
+        );
+        return;
+      }
+      const profileResult = await Effect.runPromise(
+        profileService.fetchProfile(platform, handle).pipe(Effect.either),
+      );
+      if (profileResult._tag === "Left") {
+        await post(
+          `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
+        );
+        return;
+      }
+      const profile = profileResult.right;
+      const trackedHandle = await Effect.runPromise(
+        db.addTrackedHandle(
+          context.guildId,
+          platform,
+          profile.handle,
+          normalizeHandle(profile.handle),
+          targetUserId,
+        ),
+      );
+      await Effect.runPromise(
+        db.insertRatingSnapshot({
+          trackedHandleId: trackedHandle.id,
+          rating: profile.rating,
+          rankLabel: profile.rankLabel,
+          maxRating: profile.maxRating,
+          isImprovement: false,
+          rawPayloadJson: profile.rawPayload,
+        }),
+      );
       await post(
-        ["## Next Up", "", renderContestLine(contest, timeZone)].join("\n"),
+        `Tracking started. Monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` for @${targetUserId}.`,
       );
     });
 
-    onCommand("/lucky", async (event, post) => {
+    // ── /profile subcommands ──────────────────────────────────────────────────
+    const profileHandler = async (
+      event: SlashCommandEvent,
+      post: (msg: string) => Promise<void>,
+    ) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
       const raw = asInteractionRaw(event.raw);
-      const timeZone = await getChannelTimeZone(raw.channel_id);
-      const contest = await Effect.runPromise(
-        digestService.pickLuckyContest(timeZone),
+      const sub = raw.data?.options?.[0]?.name;
+      const options = flattenOptions(raw.data?.options);
+      if (sub === "rating") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const result = await Effect.runPromise(
+          profileService.fetchProfile(platform, handle).pipe(Effect.either),
+        );
+        if (result._tag === "Left") {
+          await post(
+            `Could not find \`${handle}\` on ${platformLabel(platform)}.`,
+          );
+          return;
+        }
+        const p = result.right;
+        await post(
+          [
+            `## ${platformLabel(platform)} rating`,
+            `> **[${escHandle(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`,
+          ].join("\n"),
+        );
+        return;
+      }
+      if (sub === "compare") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handleA = options.get("handle_a");
+        const handleB = options.get("handle_b");
+        if (!platform || !handleA || !handleB) {
+          await post("`platform`, `handle_a`, and `handle_b` are required.");
+          return;
+        }
+        const [lr, rr] = await Promise.all([
+          Effect.runPromise(
+            profileService.fetchProfile(platform, handleA).pipe(Effect.either),
+          ),
+          Effect.runPromise(
+            profileService.fetchProfile(platform, handleB).pipe(Effect.either),
+          ),
+        ]);
+        if (lr._tag === "Left") {
+          await post(
+            `Could not find \`${handleA}\` on ${platformLabel(platform)}.`,
+          );
+          return;
+        }
+        if (rr._tag === "Left") {
+          await post(
+            `Could not find \`${handleB}\` on ${platformLabel(platform)}.`,
+          );
+          return;
+        }
+        const fmt = (p: typeof lr.right) =>
+          `> **[${escHandle(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`;
+        await post(
+          [
+            `## ${platformLabel(platform)} comparison`,
+            "",
+            fmt(lr.right),
+            fmt(rr.right),
+          ].join("\n"),
+        );
+        return;
+      }
+      if (sub === "streak") {
+        const platform = options.get("platform") as
+          | TrackingPlatform
+          | undefined;
+        const handle = options.get("handle");
+        if (!platform || !handle) {
+          await post("Both `platform` and `handle` are required.");
+          return;
+        }
+        const tracked = await Effect.runPromise(
+          db.getTrackedHandleByGuild(
+            context.guildId,
+            platform,
+            normalizeHandle(handle),
+          ),
+        );
+        if (!tracked) {
+          await post("That handle is not tracked in this server yet.");
+          return;
+        }
+        const count = await Effect.runPromise(
+          db.countImprovementSnapshots(
+            context.guildId,
+            platform,
+            tracked.handleNormalized,
+          ),
+        );
+        await post(
+          `## Streak\n> \`${tracked.handle}\`  **${count}** improvement${count === 1 ? "" : "s"} recorded`,
+        );
+        return;
+      }
+      if (sub === "info") {
+        const targetUserId = options.get("user");
+        if (!targetUserId) {
+          await post("Provide a user to look up.");
+          return;
+        }
+        const allHandles = await Effect.runPromise(
+          db.listTrackedHandlesByGuild(context.guildId),
+        );
+        const handles = allHandles.filter(
+          (h) => h.createdByUserId === targetUserId,
+        );
+        if (handles.length === 0) {
+          await post("No tracked handles found for that user.");
+          return;
+        }
+        const [displayName, snapshots] = await Promise.all([
+          fetchUsername(targetUserId),
+          Promise.all(
+            handles.map((h) =>
+              Effect.runPromise(
+                db
+                  .getLatestRatingSnapshot(h.id)
+                  .pipe(Effect.orElseSucceed(() => null)),
+              ),
+            ),
+          ),
+        ]);
+        const lines = handles.map((h, i) => {
+          const snap = snapshots[i];
+          const rating =
+            snap?.rating != null ? `\`${snap.rating}\`` : "`Unrated`";
+          const rank = snap?.rankLabel ? `  *${snap.rankLabel}*` : "";
+          return `[${escHandle(h.handle)}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}  ${rating}${rank}`;
+        });
+        await post([`## ${displayName}'s handles`, "", ...lines].join("\n"));
+        return;
+      }
+      await post("Unknown subcommand.");
+    };
+    onCommand("/profile", profileHandler);
+    onCommand("/profile rating", profileHandler);
+    onCommand("/profile compare", profileHandler);
+    onCommand("/profile streak", profileHandler);
+    onCommand("/profile info", profileHandler);
+
+    // ── /leaderboard ─────────────────────────────────────────────────────────
+    onCommand("/leaderboard", async (event, post) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
+      const leaderboard = await Effect.runPromise(
+        db.getLeaderboard(context.guildId),
       );
-      if (!contest) {
-        await post("No contest was available for a lucky pick.");
+      if (leaderboard.length === 0) {
+        await post("No rated users tracked in this server yet.");
         return;
       }
       await post(
         [
-          "## Lucky Pick",
-          "> -# bias: contests under 2h",
+          "## Leaderboard",
           "",
-          renderContestLine(contest, timeZone),
+          ...leaderboard.map((entry, i) => {
+            const rank = entry.rankLabel ? `  ${entry.rankLabel}` : "";
+            return `**${i + 1}.** [${escHandle(entry.handle)}](<${profileUrl(entry.platform, entry.handle)}>)  ${entry.rating ?? "unrated"}${rank}`;
+          }),
         ].join("\n"),
       );
     });
 
+    // ── /random ──────────────────────────────────────────────────────────────
     onCommand("/random", async (event, post) => {
+      const context = await requireCommandChannel(event, post);
+      if (!context) return;
       const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-
       const handles = await Effect.runPromise(
-        store.listTrackedHandlesByGuild(context.guildId),
+        db.listTrackedHandlesByGuild(context.guildId),
       );
       const cfHandle = handles.find(
         (h) =>
@@ -865,11 +1466,10 @@ export const DiscordBotServiceLive = Layer.scoped(
       );
       if (!cfHandle) {
         await post(
-          "You don't have a Codeforces handle tracked in this server. Use `/track-add` first.",
+          "You don't have a codeforces handle tracked in this server. Use `/track add` first.",
         );
         return;
       }
-
       const profile = await Effect.runPromise(
         profileService
           .fetchProfile("codeforces", cfHandle.handle)
@@ -887,16 +1487,15 @@ export const DiscordBotServiceLive = Layer.scoped(
       const problem = await Effect.runPromise(
         fetchRandomProblem(minRating, maxRating).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(DbService, db),
         ),
       );
-
       if (!problem) {
         await post(
-          `No problems found in the ${minRating}–${maxRating} rating range. Try again later.`,
+          `No problems found in the ${minRating}-${maxRating} rating range. Try again later.`,
         );
         return;
       }
-
       const tags =
         problem.tags.length > 0
           ? `\n> -# tags: ${problem.tags.join(", ")}`
@@ -912,274 +1511,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       );
     });
 
-    onCommand("/track-add", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
-      const platform = options.get("platform") as TrackingPlatform | undefined;
-      const handle = options.get("handle");
-      if (!platform || !handle) {
-        await post("Both `platform` and `handle` are required.");
-        return;
-      }
-      const profileResult = await Effect.runPromise(
-        profileService.fetchProfile(platform, handle).pipe(Effect.either),
-      );
-      if (profileResult._tag === "Left") {
-        const err = profileResult.left;
-        await post(
-          `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
-        );
-        return;
-      }
-      const profile = profileResult.right;
-      const trackedHandle = await Effect.runPromise(
-        store.addTrackedHandle(
-          context.guildId,
-          platform,
-          profile.handle,
-          normalizeHandle(profile.handle),
-          event.user.userId,
-        ),
-      );
-      await Effect.runPromise(
-        store.insertRatingSnapshot({
-          trackedHandleId: trackedHandle.id,
-          rating: profile.rating,
-          rankLabel: profile.rankLabel,
-          maxRating: profile.maxRating,
-          isImprovement: false,
-          rawPayloadJson: profile.rawPayload,
-        }),
-      );
-      await post(
-        `**Tracking Started:** Now monitoring ${platformLabel(platform)} handle \`${trackedHandle.handle}\` in this server.`,
-      );
-    });
-
-    onCommand("/track-remove", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
-      const platform = options.get("platform") as TrackingPlatform | undefined;
-      const handle = options.get("handle");
-      if (!platform || !handle) {
-        await post("Both `platform` and `handle` are required.");
-        return;
-      }
-      const removed = await Effect.runPromise(
-        store.removeTrackedHandle(
-          context.guildId,
-          platform,
-          normalizeHandle(handle),
-        ),
-      );
-      await post(
-        removed
-          ? `**Removed:** Stopped tracking ${platformLabel(platform)} handle \`${handle}\`.`
-          : "That handle is not currently tracked in this server.",
-      );
-    });
-
-    onCommand("/track-list", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const trackedHandles = await Effect.runPromise(
-        store.listTrackedHandlesByGuild(context.guildId),
-      );
-      await post(
-        [
-          "## Tracked Handles",
-          "",
-          trackedHandles.length === 0
-            ? "none"
-            : await renderTrackedByUser(trackedHandles),
-        ].join("\n"),
-      );
-    });
-
-    onCommand("/leaderboard", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const leaderboard = await Effect.runPromise(
-        store.getLeaderboard(context.guildId),
-      );
-      if (leaderboard.length === 0) {
-        await post("No rated users tracked in this channel yet.");
-        return;
-      }
-      await post(
-        [
-          "## Leaderboard",
-          "",
-          ...leaderboard.map((entry, i) => {
-            const url = `https://codeforces.com/profile/${encodeURIComponent(entry.handle)}`;
-            const rank = entry.rankLabel ? `  ${entry.rankLabel}` : "";
-            return `**${i + 1}.** [${escHandle(entry.handle)}](<${url}>)  ${entry.rating ?? "unrated"}${rank}`;
-          }),
-        ].join("\n"),
-      );
-    });
-
-    onCommand("/rating", async (event, post) => {
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
-      const platform = options.get("platform") as TrackingPlatform | undefined;
-      const handle = options.get("handle");
-      if (!platform || !handle) {
-        await post("Both `platform` and `handle` are required.");
-        return;
-      }
-      const profileResult = await Effect.runPromise(
-        profileService.fetchProfile(platform, handle).pipe(Effect.either),
-      );
-      if (profileResult._tag === "Left") {
-        await post(
-          `Could not find \`${handle}\` on ${platformLabel(platform)}. Check the handle and try again.`,
-        );
-        return;
-      }
-      const profile = profileResult.right;
-      await post(
-        [
-          `## ${platformLabel(platform)} Rating`,
-          `> **[${escHandle(profile.handle)}](<${profile.profileUrl}>)**  \`${profile.rating ?? "Unrated"}\`${profile.rankLabel ? `  *${profile.rankLabel}*` : ""}${profile.maxRating ? `  ·  max \`${profile.maxRating}\`` : ""}`,
-        ].join("\n"),
-      );
-    });
-
-    onCommand("/compare", async (event, post) => {
-      const options = flattenOptions(asInteractionRaw(event.raw).data?.options);
-      const platform = options.get("platform") as TrackingPlatform | undefined;
-      const handleA = options.get("handle_a");
-      const handleB = options.get("handle_b");
-      if (!platform || !handleA || !handleB) {
-        await post("`platform`, `handle_a`, and `handle_b` are required.");
-        return;
-      }
-      const [leftResult, rightResult] = await Promise.all([
-        Effect.runPromise(
-          profileService.fetchProfile(platform, handleA).pipe(Effect.either),
-        ),
-        Effect.runPromise(
-          profileService.fetchProfile(platform, handleB).pipe(Effect.either),
-        ),
-      ]);
-      if (leftResult._tag === "Left") {
-        await post(
-          `Could not find \`${handleA}\` on ${platformLabel(platform)}.`,
-        );
-        return;
-      }
-      if (rightResult._tag === "Left") {
-        await post(
-          `Could not find \`${handleB}\` on ${platformLabel(platform)}.`,
-        );
-        return;
-      }
-      const left = leftResult.right;
-      const right = rightResult.right;
-      const fmt = (p: typeof left) =>
-        `> **[${escHandle(p.handle)}](<${p.profileUrl}>)**  \`${p.rating ?? "Unrated"}\`${p.rankLabel ? `  *${p.rankLabel}*` : ""}${p.maxRating ? `  ·  max \`${p.maxRating}\`` : ""}`;
-      await post(
-        [
-          `## ${platformLabel(platform)} Comparison`,
-          "",
-          fmt(left),
-          fmt(right),
-        ].join("\n"),
-      );
-    });
-
-    onCommand("/streak", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const options = flattenOptions(raw.data?.options);
-      const platform = options.get("platform") as TrackingPlatform | undefined;
-      const handle = options.get("handle");
-      if (!platform || !handle) {
-        await post("Both `platform` and `handle` are required.");
-        return;
-      }
-      const trackedHandle = await Effect.runPromise(
-        store.getTrackedHandleByGuild(
-          context.guildId,
-          platform,
-          normalizeHandle(handle),
-        ),
-      );
-      if (!trackedHandle) {
-        await post("That handle is not tracked in this server yet.");
-        return;
-      }
-      const count = await Effect.runPromise(
-        store.countImprovementSnapshots(
-          context.guildId,
-          platform,
-          trackedHandle.handleNormalized,
-        ),
-      );
-      await post(
-        `## Streak\n> \`${trackedHandle.handle}\`  **${count}** improvement${count === 1 ? "" : "s"} recorded`,
-      );
-    });
-
-    onCommand("/info", async (event, post) => {
-      const raw = asInteractionRaw(event.raw);
-      const context = getChannelContext(raw);
-      if (!context) {
-        await post("Use this command inside a Discord server text channel.");
-        return;
-      }
-      const targetUserId = flattenOptions(raw.data?.options).get("user");
-      if (!targetUserId) {
-        await post("Provide a user to look up.");
-        return;
-      }
-      const allHandles = await Effect.runPromise(
-        store.listTrackedHandlesByGuild(context.guildId),
-      );
-      const handles = allHandles.filter((h) => h.createdByUserId === targetUserId);
-      if (handles.length === 0) {
-        await post("No tracked handles found for that user.");
-        return;
-      }
-      const [displayName, snapshots] = await Promise.all([
-        fetchUsername(targetUserId),
-        Promise.all(
-          handles.map((h) =>
-            Effect.runPromise(store.getLatestRatingSnapshot(h.id)),
-          ),
-        ),
-      ]);
-      const lines = handles.map((h, i) => {
-        const snap = snapshots[i];
-        const rating = snap?.rating != null ? `\`${snap.rating}\`` : "`Unrated`";
-        const rank = snap?.rankLabel ? `  *${snap.rankLabel}*` : "";
-        return `[${escHandle(h.handle)}](<${profileUrl(h.platform, h.handle)}>)  ${platformLabel(h.platform)}  ${rating}${rank}`;
-      });
-      await post([`## ${displayName}'s Handles`, "", ...lines].join("\n"));
-    });
-
+    // ── /simulate (dev only) ─────────────────────────────────────────────────
     if (config.isDev) {
       onCommand("/simulate", async (event, post) => {
         const raw = asInteractionRaw(event.raw);
@@ -1188,19 +1520,18 @@ export const DiscordBotServiceLive = Layer.scoped(
           await post("Use this command inside a server text channel.");
           return;
         }
-
         const tz = await getChannelTimeZone(context.channelId);
-
-        // 1. Real digest
         const digest = await Effect.runPromise(
           digestService.getDigest("tomorrow", tz),
         );
         await post(digest.message);
-
-        // 2. One real announcement per tracked handle
         const [subscription, handles] = await Promise.all([
-          Effect.runPromise(store.getSubscriptionByChannel(context.channelId)),
-          Effect.runPromise(store.listTrackedHandlesByGuild(context.guildId)),
+          Effect.runPromise(
+            db
+              .getSubscriptionByChannel(context.channelId)
+              .pipe(Effect.orElseSucceed(() => null)),
+          ),
+          Effect.runPromise(db.listTrackedHandlesByGuild(context.guildId)),
         ]);
         if (subscription) {
           for (const h of handles) {
@@ -1238,18 +1569,19 @@ export const DiscordBotServiceLive = Layer.scoped(
       });
     }
 
+    // ── !oops (global, no guard) ─────────────────────────────────────────────
     chat.onNewMessage(/^!oops/i, async (thread, message) => {
-      console.log(
-        `[Oops] Triggered by ${message.author.userName} in thread ${message.threadId}`,
+      await Effect.runPromise(
+        Effect.logInfo(`[oops] triggered by ${message.author.userName}`),
       );
       try {
         const excuse = await generateShameExcuse();
-        console.log(`[Oops] Responding: ${excuse}`);
         await thread.post(excuse);
       } catch (error) {
-        console.error(
-          "[Oops] Handler failed:",
-          error instanceof Error ? error.message : error,
+        await Effect.runPromise(
+          Effect.logError(
+            `[oops] failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
         );
       }
     });
@@ -1282,9 +1614,7 @@ export const DiscordBotServiceLive = Layer.scoped(
     return {
       handleWebhook: (request) =>
         Effect.gen(function* () {
-          yield* Effect.logDebug(
-            `Discord webhook received: ${request.method} ${request.url}`,
-          );
+          yield* Effect.logDebug(`[webhook] ${request.method} ${request.url}`);
           const response = yield* Effect.tryPromise({
             try: () => initializedChat.webhooks.discord(request),
             catch: (cause) =>
@@ -1295,7 +1625,7 @@ export const DiscordBotServiceLive = Layer.scoped(
               }),
           });
           yield* Effect.logInfo(
-            `Discord webhook processed with status ${response.status}`,
+            `[webhook] processed status=${response.status}`,
           );
           return response;
         }),
@@ -1310,7 +1640,7 @@ export const DiscordBotServiceLive = Layer.scoped(
           catch: (cause) =>
             new DiscordIntegrationError({
               operation: "postChannelMessage",
-              reason: "Failed to post a message to Discord",
+              reason: "Failed to post message",
               cause,
             }),
         }),
@@ -1323,7 +1653,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       startGateway: Effect.gen(function* () {
         const sessionMs = 23 * 60 * 60 * 1000;
         while (true) {
-          yield* Effect.logInfo("[Gateway] Starting Discord Gateway session");
+          yield* Effect.logInfo("[gateway] starting session");
           yield* Effect.tryPromise({
             try: () =>
               new Promise<void>((resolve, reject) => {
@@ -1344,15 +1674,13 @@ export const DiscordBotServiceLive = Layer.scoped(
                 cause,
               }),
           }).pipe(
-            Effect.catchAll((e) => {
-              const cause =
-                e.cause instanceof Error ? e.cause.message : String(e.cause);
-              return Effect.logError(
-                `[Gateway] Session error: ${e.reason} — ${cause}`,
-              );
-            }),
+            Effect.catchAll((e) =>
+              Effect.logError(
+                `[gateway] session error: ${e.reason} — ${e.cause instanceof Error ? e.cause.message : String(e.cause)}`,
+              ),
+            ),
           );
-          yield* Effect.logInfo("[Gateway] Session ended, reconnecting in 5s");
+          yield* Effect.logInfo("[gateway] session ended, reconnecting in 5s");
           yield* Effect.sleep(5000);
         }
       }) as Effect.Effect<never, DiscordIntegrationError>,
