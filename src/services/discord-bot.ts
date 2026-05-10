@@ -897,18 +897,11 @@ export const DiscordBotServiceLive = Layer.scoped(
         return;
       }
 
-      const tags =
-        problem.tags.length > 0
-          ? `\n> -# tags: ${problem.tags.join(", ")}`
-          : "";
       await post(
         [
           `## [${problem.name}](<${problem.url}>)`,
           `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\``,
-          tags,
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        ].join("\n"),
       );
     });
 
