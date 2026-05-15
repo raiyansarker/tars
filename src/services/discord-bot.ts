@@ -345,6 +345,14 @@ const commandDefinitions = [
           { name: "Hard (+400–600)", value: "hard" },
         ],
       },
+      {
+        type: 4,
+        name: "rating",
+        description: "Specific rating to use instead of your tracked rating (e.g. 1100)",
+        required: false,
+        min_value: 800,
+        max_value: 3500,
+      },
     ],
   },
   { name: "help", description: "Show command help and setup guidance." },
@@ -374,6 +382,16 @@ const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
     (permissions & MANAGE_CHANNELS) === MANAGE_CHANNELS
   );
 };
+
+export const resolveRandomRatingRange = (
+  rating: number,
+  difficulty: string,
+): [number, number] =>
+  difficulty === "easy"
+    ? [rating - 100, rating + 100]
+    : difficulty === "hard"
+      ? [rating + 400, rating + 600]
+      : [rating, rating + 200];
 
 const flattenOptions = (
   options: ReadonlyArray<DiscordInteractionOption> | undefined,
@@ -870,20 +888,21 @@ export const DiscordBotServiceLive = Layer.scoped(
         return;
       }
 
-      const profile = await Effect.runPromise(
-        profileService
-          .fetchProfile("codeforces", cfHandle.handle)
-          .pipe(Effect.catchAll(() => Effect.succeed(null))),
-      );
-      const rating = profile?.rating ?? 800;
+      const opts = flattenOptions(raw.data?.options);
+      const explicitRating = opts.get("rating");
+      const rating = explicitRating
+        ? Number(explicitRating)
+        : await Effect.runPromise(
+            profileService
+              .fetchProfile("codeforces", cfHandle.handle)
+              .pipe(
+                Effect.map((p) => p.rating ?? 800),
+                Effect.catchAll(() => Effect.succeed(800)),
+              ),
+          );
       const difficulty =
         flattenOptions(raw.data?.options).get("difficulty") ?? "medium";
-      const [minRating, maxRating] =
-        difficulty === "easy"
-          ? [rating - 100, rating + 100]
-          : difficulty === "hard"
-            ? [rating + 400, rating + 600]
-            : [rating, rating + 200];
+      const [minRating, maxRating] = resolveRandomRatingRange(rating, difficulty);
       const problem = await Effect.runPromise(
         fetchRandomProblem(minRating, maxRating).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -900,7 +919,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(
         [
           `## [${problem.name}](<${problem.url}>)`,
-          `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\``,
+          `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\`${explicitRating ? `  ·  Filtered at \`${rating}\`` : ""}`,
         ].join("\n"),
       );
     });
