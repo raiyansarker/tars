@@ -335,20 +335,9 @@ const commandDefinitions = [
     description: "Get a random Codeforces problem suited to your rating.",
     options: [
       {
-        type: 3,
-        name: "difficulty",
-        description: "Problem difficulty relative to your rating",
-        required: false,
-        choices: [
-          { name: "Easy (±100)", value: "easy" },
-          { name: "Medium (+200–400)", value: "medium" },
-          { name: "Hard (+400–600)", value: "hard" },
-        ],
-      },
-      {
         type: 4,
         name: "rating",
-        description: "Specific rating to use instead of your tracked rating (e.g. 1100)",
+        description: "Specific rating to filter problems by (e.g. 1100). Defaults to your tracked rating.",
         required: false,
         min_value: 800,
         max_value: 3500,
@@ -382,16 +371,6 @@ const hasAdminPermissions = (raw: DiscordInteractionRaw): boolean => {
     (permissions & MANAGE_CHANNELS) === MANAGE_CHANNELS
   );
 };
-
-export const resolveRandomRatingRange = (
-  rating: number,
-  difficulty: string,
-): [number, number] =>
-  difficulty === "easy"
-    ? [rating - 100, rating + 100]
-    : difficulty === "hard"
-      ? [rating + 400, rating + 600]
-      : [rating, rating + 200];
 
 const flattenOptions = (
   options: ReadonlyArray<DiscordInteractionOption> | undefined,
@@ -900,18 +879,15 @@ export const DiscordBotServiceLive = Layer.scoped(
                 Effect.catchAll(() => Effect.succeed(800)),
               ),
           );
-      const difficulty =
-        flattenOptions(raw.data?.options).get("difficulty") ?? "medium";
-      const [minRating, maxRating] = resolveRandomRatingRange(rating, difficulty);
       const problem = await Effect.runPromise(
-        fetchRandomProblem(minRating, maxRating).pipe(
+        fetchRandomProblem(rating, rating).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
         ),
       );
 
       if (!problem) {
         await post(
-          `No problems found in the ${minRating}–${maxRating} rating range. Try again later.`,
+          `No problems found at rating \`${rating}\`. Try again later.`,
         );
         return;
       }
@@ -919,7 +895,7 @@ export const DiscordBotServiceLive = Layer.scoped(
       await post(
         [
           `## [${problem.name}](<${problem.url}>)`,
-          `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\`${explicitRating ? `  ·  Filtered at \`${rating}\`` : ""}`,
+          `> Rating: \`${problem.rating}\`  ·  For: \`${cfHandle.handle}\``,
         ].join("\n"),
       );
     });
