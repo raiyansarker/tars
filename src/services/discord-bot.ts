@@ -880,14 +880,16 @@ export const DiscordBotServiceLive = Layer.scoped(
               ),
           );
       const problem = await Effect.runPromise(
-        fetchRandomProblem(rating, rating).pipe(
+        fetchRandomProblem(rating, explicitRating ? rating : 3500).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
         ),
       );
 
       if (!problem) {
         await post(
-          `No problems found at rating \`${rating}\`. Try again later.`,
+          explicitRating
+            ? `No problems found at rating \`${rating}\`. Try again later.`
+            : `No problems found at rating \`${rating}\` or above. Try again later.`,
         );
         return;
       }
